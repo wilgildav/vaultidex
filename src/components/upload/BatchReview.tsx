@@ -11,11 +11,60 @@ function ConfidenceBadge({ level }: { level: string | null }) {
   return <span className="text-xs text-zinc-500 dark:text-zinc-400">({level})</span>;
 }
 
+// Shows a spec that may have a "verified" (grounded web search) value in
+// addition to the original visual estimate — clearly labeled so a verified
+// fact and an AI guess are never confused for one another.
+function SpecRow({
+  label,
+  estimated,
+  verified,
+  unit,
+}: {
+  label: string;
+  estimated: string | number | null;
+  verified: string | number | null;
+  unit?: string;
+}) {
+  if (estimated == null && verified == null) return null;
+  const isVerified = verified != null;
+  const displayValue = verified ?? estimated;
+
+  return (
+    <div className="flex justify-between gap-2">
+      <dt className="text-zinc-600 dark:text-zinc-400">{label}</dt>
+      <dd className="text-right font-medium text-black dark:text-zinc-50">
+        <div className="inline-flex items-center gap-1.5">
+          <span>
+            {displayValue}
+            {unit}
+          </span>
+          {isVerified ? (
+            <span className="rounded-full bg-green-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-green-800 dark:bg-green-900 dark:text-green-300">
+              ✓ verified
+            </span>
+          ) : (
+            <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800 dark:bg-amber-900 dark:text-amber-300">
+              estimated
+            </span>
+          )}
+        </div>
+        {isVerified && estimated != null && String(estimated) !== String(verified) && (
+          <div className="text-xs font-normal text-zinc-500 dark:text-zinc-400">
+            visual estimate: {estimated}
+            {unit}
+          </div>
+        )}
+      </dd>
+    </div>
+  );
+}
+
 export default function BatchReview({ initialKnives }: { initialKnives: Knife[] }) {
   const supabase = useMemo(() => createClient(), []);
   const [knives, setKnives] = useState(initialKnives);
   const [thumbnails, setThumbnails] = useState<Thumbnails>({});
   const [identifying, setIdentifying] = useState<Record<string, boolean>>({});
+  const [verifying, setVerifying] = useState<Record<string, boolean>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
@@ -54,22 +103,45 @@ export default function BatchReview({ initialKnives }: { initialKnives: Knife[] 
     };
   }, [initialKnives, supabase]);
 
-  const identify = useCallback(async (knifeId: string) => {
-    setIdentifying((prev) => ({ ...prev, [knifeId]: true }));
-    setErrors((prev) => ({ ...prev, [knifeId]: "" }));
-
-    const res = await fetch(`/api/knives/${knifeId}/identify`, { method: "POST" });
+  // Fact verification (grounded web search) is the slowest step in the
+  // whole pipeline, so it's a separate follow-up call rather than part of
+  // identify() below — the base result shows up immediately, and specs
+  // upgrade to "verified" in place once this resolves, instead of the user
+  // staring at "Identifying…" for a minute or more waiting on a web search.
+  const verifySpecsForKnife = useCallback(async (knifeId: string) => {
+    setVerifying((prev) => ({ ...prev, [knifeId]: true }));
+    const res = await fetch(`/api/knives/${knifeId}/verify-specs`, { method: "POST" });
     const body = await res.json();
-
-    if (!res.ok) {
-      setErrors((prev) => ({ ...prev, [knifeId]: body.error ?? "Identification failed." }));
-    } else {
+    if (res.ok && body.knife) {
       setKnives((prev) => prev.map((k) => (k.id === knifeId ? body.knife : k)));
-      // Collapse slots the model thinks are empty; expand everything else.
-      setExpanded((prev) => ({ ...prev, [knifeId]: body.knife.status !== "not_identified" }));
     }
-    setIdentifying((prev) => ({ ...prev, [knifeId]: false }));
+    setVerifying((prev) => ({ ...prev, [knifeId]: false }));
   }, []);
+
+  const identify = useCallback(
+    async (knifeId: string) => {
+      setIdentifying((prev) => ({ ...prev, [knifeId]: true }));
+      setErrors((prev) => ({ ...prev, [knifeId]: "" }));
+
+      const res = await fetch(`/api/knives/${knifeId}/identify`, { method: "POST" });
+      const body = await res.json();
+
+      if (!res.ok) {
+        setErrors((prev) => ({ ...prev, [knifeId]: body.error ?? "Identification failed." }));
+      } else {
+        setKnives((prev) => prev.map((k) => (k.id === knifeId ? body.knife : k)));
+        // Collapse slots the model thinks are empty; expand everything else.
+        setExpanded((prev) => ({ ...prev, [knifeId]: body.knife.status !== "not_identified" }));
+        if (body.knife.maker_confidence === "high" && body.knife.model_confidence === "high") {
+          // Not awaited — this runs in the background after identify()
+          // has already resolved and updated the UI.
+          verifySpecsForKnife(knifeId);
+        }
+      }
+      setIdentifying((prev) => ({ ...prev, [knifeId]: false }));
+    },
+    [verifySpecsForKnife],
+  );
 
   // Run identification automatically for every slot as soon as the batch
   // is created, instead of making the user click through each one.
@@ -171,15 +243,11 @@ export default function BatchReview({ initialKnives }: { initialKnives: Knife[] 
                       </dd>
                     </div>
                   )}
-                  {knife.blade_steel && (
-                    <div className="flex justify-between gap-2">
-                      <dt className="text-zinc-600 dark:text-zinc-400">Steel</dt>
-                      <dd className="text-right font-medium text-black dark:text-zinc-50">
-                        {knife.blade_steel}{" "}
-                        <ConfidenceBadge level={knife.blade_steel_confidence} />
-                      </dd>
-                    </div>
-                  )}
+                  <SpecRow
+                    label="Steel"
+                    estimated={knife.blade_steel}
+                    verified={knife.blade_steel_verified}
+                  />
                   {knife.handle_material && (
                     <div className="flex justify-between gap-2">
                       <dt className="text-zinc-600 dark:text-zinc-400">Handle</dt>
@@ -189,23 +257,44 @@ export default function BatchReview({ initialKnives }: { initialKnives: Knife[] 
                       </dd>
                     </div>
                   )}
-                  {knife.blade_length_in != null && (
-                    <div className="flex justify-between gap-2">
-                      <dt className="text-zinc-600 dark:text-zinc-400">Blade length</dt>
-                      <dd className="text-right font-medium text-black dark:text-zinc-50">
-                        {knife.blade_length_in}&Prime;
-                      </dd>
-                    </div>
-                  )}
-                  {knife.overall_length_open_in != null && (
-                    <div className="flex justify-between gap-2">
-                      <dt className="text-zinc-600 dark:text-zinc-400">Overall (open)</dt>
-                      <dd className="text-right font-medium text-black dark:text-zinc-50">
-                        {knife.overall_length_open_in}&Prime;
-                      </dd>
-                    </div>
-                  )}
+                  <SpecRow
+                    label="Blade length"
+                    estimated={knife.blade_length_in}
+                    verified={knife.blade_length_in_verified}
+                    unit="″"
+                  />
+                  <SpecRow
+                    label="Overall (open)"
+                    estimated={knife.overall_length_open_in}
+                    verified={knife.overall_length_open_in_verified}
+                    unit="″"
+                  />
                 </dl>
+              )}
+
+              {verifying[knife.id] && (
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                  Verifying specs against real sources…
+                </p>
+              )}
+
+              {knife.spec_verification_sources && knife.spec_verification_sources.length > 0 && (
+                <div className="text-xs text-zinc-500 dark:text-zinc-400">
+                  Sources:{" "}
+                  {knife.spec_verification_sources.map((source, i) => (
+                    <span key={source.uri}>
+                      {i > 0 && ", "}
+                      <a
+                        href={source.uri}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="underline hover:text-black dark:hover:text-zinc-200"
+                      >
+                        {source.title}
+                      </a>
+                    </span>
+                  ))}
+                </div>
               )}
 
               {errors[knife.id] && <p className="text-xs text-red-600">{errors[knife.id]}</p>}
@@ -219,6 +308,16 @@ export default function BatchReview({ initialKnives }: { initialKnives: Knife[] 
                 >
                   {identifying[knife.id] ? "Identifying…" : "Re-identify"}
                 </button>
+                {knife.maker_confidence === "high" && knife.model_confidence === "high" && (
+                  <button
+                    type="button"
+                    onClick={() => verifySpecsForKnife(knife.id)}
+                    disabled={verifying[knife.id] || identifying[knife.id]}
+                    className="flex h-9 items-center justify-center rounded-full border border-solid border-black/[.15] px-4 text-sm font-medium transition-colors hover:bg-black/[.04] disabled:opacity-50 dark:border-white/[.2] dark:hover:bg-[#1a1a1a]"
+                  >
+                    {verifying[knife.id] ? "Verifying…" : "Re-verify specs"}
+                  </button>
+                )}
                 {knife.status === "not_identified" && (
                   <button
                     type="button"

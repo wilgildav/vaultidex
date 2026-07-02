@@ -84,6 +84,11 @@ export async function POST(
           era: null,
           blade_length_in: null,
           overall_length_open_in: null,
+          blade_length_in_verified: null,
+          overall_length_open_in_verified: null,
+          blade_steel_verified: null,
+          spec_verification_sources: null,
+          spec_verification_notes: null,
           notes: null,
         })
         .eq("id", id)
@@ -114,6 +119,15 @@ export async function POST(
         blade_length_in: identification.blade_length_in,
         overall_length_open_in: identification.overall_length_open_in,
         notes: identification.notes,
+        // Verification runs separately (POST .../verify-specs) after the
+        // client sees this response, so any previously-verified specs are
+        // now stale (maker/model may have just changed) — clear them here
+        // rather than leaving mismatched data behind.
+        blade_length_in_verified: null,
+        overall_length_open_in_verified: null,
+        blade_steel_verified: null,
+        spec_verification_sources: null,
+        spec_verification_notes: null,
       })
       .eq("id", id)
       .select()

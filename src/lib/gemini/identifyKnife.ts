@@ -6,6 +6,7 @@ import {
   createUserContent,
   type Schema,
 } from "@google/genai";
+import { getGeminiClient } from "./client";
 import {
   prepareImage,
   extractSlotFullCrop,
@@ -16,14 +17,6 @@ import {
 
 const MODEL = "gemini-2.5-flash";
 const MAX_MARKS_PER_SIDE = 3;
-
-function getClient(): GoogleGenAI {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error("GEMINI_API_KEY is not configured.");
-  }
-  return new GoogleGenAI({ apiKey });
-}
 
 function imagePart(image: ImageInput) {
   return createPartFromBase64(
@@ -255,6 +248,13 @@ async function generateJson<T>(
   return JSON.parse(text) as T;
 }
 
+const PRESENCE_PROMPT =
+  "You are looking at one slot from a flat-lay photo of up to five pocketknives, laid out " +
+  "side by side and photographed from directly above. This is a single cropped vertical slice " +
+  "from that photo, showing the front and back of whatever is in this slot. Is a single " +
+  "physical knife clearly present and visible in this slot? Answer false for an " +
+  "empty/background slot, a non-knife object, or an image too unclear to tell.";
+
 const LOCATE_PROMPT =
   "Look at the full view of this knife slot (front and back) and identify up to 3 distinct " +
   "areas on each side where you can see any text, numbers, stamps, engravings, or printed " +
@@ -310,10 +310,17 @@ async function runTranscription(
   return transcription;
 }
 
-// Pipeline for a single knife slot:
-//   1. Presence check — is a knife even here? Short-circuits on empty slots.
-//   2. Locate — ask Gemini roughly where on the blade/handle any marking
-//      appears, in both the front and back full views.
+// Pipeline for a single knife slot. Fact verification (a grounded web
+// search) is deliberately NOT part of this function — it's the slowest
+// single step (real web search + synthesis, not just token generation),
+// so it runs as a separate follow-up call (see verifySpecs.ts and the
+// /verify-specs route) once this returns, instead of making the caller
+// wait for it before seeing any result.
+//
+//   1. Presence check and 2. Locate run in parallel — locate doesn't
+//      actually depend on knowing presence is true, so there's no reason
+//      to wait for one before starting the other. If presence comes back
+//      false, the locate result is just discarded.
 //   3. Zoom — crop tightly around each located point, from the original
 //      full-resolution photo, so small dense text gets dedicated pixels
 //      instead of being diluted across the whole knife.
@@ -330,7 +337,7 @@ export async function identifyKnife(
   backBuffer: Buffer,
   slotPosition: number,
 ): Promise<IdentifyKnifeResult> {
-  const ai = getClient();
+  const ai = getGeminiClient();
 
   const [frontPrepared, backPrepared] = await Promise.all([
     prepareImage(frontBuffer),
@@ -341,25 +348,22 @@ export async function identifyKnife(
     extractSlotFullCrop(backPrepared, slotPosition),
   ]);
 
-  const presence = await generateJson<{ knife_present: boolean; reason: string }>(
-    ai,
-    [
-      "You are looking at one slot from a flat-lay photo of up to five pocketknives, laid out side by side and photographed from directly above. This is a single cropped vertical slice from that photo, showing the front and back of whatever is in this slot.",
-      ...imageParts(frontFull, backFull),
-      "Is a single physical knife clearly present and visible in this slot? Answer false for an empty/background slot, a non-knife object, or an image too unclear to tell.",
-    ],
-    PRESENCE_SCHEMA,
-  );
+  const [presence, located] = await Promise.all([
+    generateJson<{ knife_present: boolean; reason: string }>(
+      ai,
+      [...imageParts(frontFull, backFull), PRESENCE_PROMPT],
+      PRESENCE_SCHEMA,
+    ),
+    generateJson<{ front_marks: MarkLocation[]; back_marks: MarkLocation[] }>(
+      ai,
+      [...imageParts(frontFull, backFull), LOCATE_PROMPT],
+      LOCATE_SCHEMA,
+    ),
+  ]);
 
   if (!presence.knife_present) {
     return { knifePresent: false, presenceReason: presence.reason };
   }
-
-  const located = await generateJson<{ front_marks: MarkLocation[]; back_marks: MarkLocation[] }>(
-    ai,
-    [...imageParts(frontFull, backFull), LOCATE_PROMPT],
-    LOCATE_SCHEMA,
-  );
 
   const [frontMarkCrops, backMarkCrops] = await Promise.all([
     Promise.all(

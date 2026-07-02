@@ -1,5 +1,7 @@
 export type ConfidenceLevel = "high" | "medium" | "low" | null;
 
+export type SpecSource = { title: string; uri: string };
+
 export type Knife = {
   id: string;
   user_id: string;
@@ -17,6 +19,11 @@ export type Knife = {
   era: string | null;
   blade_length_in: number | null;
   overall_length_open_in: number | null;
+  blade_length_in_verified: number | null;
+  overall_length_open_in_verified: number | null;
+  blade_steel_verified: string | null;
+  spec_verification_sources: SpecSource[] | null;
+  spec_verification_notes: string | null;
   weight_oz: number | null;
   notes: string | null;
   status: "draft" | "confirmed" | "not_identified";
