@@ -26,6 +26,14 @@ export type Knife = {
   spec_verification_notes: string | null;
   weight_oz: number | null;
   notes: string | null;
+  ai_maker: string | null;
+  ai_model: string | null;
+  ai_pattern: string | null;
+  ai_blade_steel: string | null;
+  ai_handle_material: string | null;
+  ai_blade_length_in: number | null;
+  ai_overall_length_open_in: number | null;
+  ai_notes: string | null;
   status: "draft" | "confirmed" | "not_identified";
   visibility: "private" | "public";
   front_image_path: string | null;

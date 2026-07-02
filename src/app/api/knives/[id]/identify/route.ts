@@ -90,6 +90,14 @@ export async function POST(
           spec_verification_sources: null,
           spec_verification_notes: null,
           notes: null,
+          ai_maker: null,
+          ai_model: null,
+          ai_pattern: null,
+          ai_blade_steel: null,
+          ai_handle_material: null,
+          ai_blade_length_in: null,
+          ai_overall_length_open_in: null,
+          ai_notes: null,
         })
         .eq("id", id)
         .select()
@@ -119,6 +127,17 @@ export async function POST(
         blade_length_in: identification.blade_length_in,
         overall_length_open_in: identification.overall_length_open_in,
         notes: identification.notes,
+        // Snapshot of the AI's own answer, kept alongside the editable
+        // fields above so a later correction in the review queue never
+        // overwrites what the AI originally said.
+        ai_maker: identification.maker,
+        ai_model: identification.model,
+        ai_pattern: identification.pattern,
+        ai_blade_steel: identification.blade_steel,
+        ai_handle_material: identification.handle_material,
+        ai_blade_length_in: identification.blade_length_in,
+        ai_overall_length_open_in: identification.overall_length_open_in,
+        ai_notes: identification.notes,
         // Verification runs separately (POST .../verify-specs) after the
         // client sees this response, so any previously-verified specs are
         // now stale (maker/model may have just changed) — clear them here
