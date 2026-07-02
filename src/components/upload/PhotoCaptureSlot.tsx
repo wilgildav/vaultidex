@@ -46,7 +46,16 @@ export default function PhotoCaptureSlot({ label, file, onChange }: Props) {
     setCameraError(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment" },
+        video: {
+          facingMode: "environment",
+          // Without explicit constraints, browsers often default to a low
+          // resolution (observed ~480x640) — nowhere near what phone
+          // cameras can do, and far too soft for reading tang stamps once
+          // cropped into 5 slots. Ask for as much as the device offers;
+          // "ideal" degrades gracefully instead of failing on older devices.
+          width: { ideal: 3840 },
+          height: { ideal: 2160 },
+        },
         audio: false,
       });
       streamRef.current = stream;
