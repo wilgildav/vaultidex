@@ -20,7 +20,15 @@ export default async function Home() {
                 {user.email}
               </span>
             </p>
-            <LogoutButton />
+            <div className="flex items-center gap-3">
+              <Link
+                href="/upload"
+                className="flex h-10 items-center justify-center rounded-full bg-foreground px-5 text-sm font-medium text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc]"
+              >
+                Upload knives
+              </Link>
+              <LogoutButton />
+            </div>
           </>
         ) : (
           <>
