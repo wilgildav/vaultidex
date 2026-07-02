@@ -1,8 +1,41 @@
 import Image from "next/image";
+import Link from "next/link";
+import { createClient } from "@/lib/supabase/server";
+import LogoutButton from "@/components/LogoutButton";
 
-export default function Home() {
+export default async function Home() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
   return (
     <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
+      <div className="flex w-full max-w-3xl items-center justify-between px-16 pt-8">
+        {user ? (
+          <>
+            <p className="text-sm text-zinc-600 dark:text-zinc-400">
+              Logged in as{" "}
+              <span className="font-medium text-black dark:text-zinc-50">
+                {user.email}
+              </span>
+            </p>
+            <LogoutButton />
+          </>
+        ) : (
+          <>
+            <p className="text-sm text-zinc-600 dark:text-zinc-400">
+              You are not logged in.
+            </p>
+            <Link
+              href="/login"
+              className="flex h-10 items-center justify-center rounded-full bg-foreground px-5 text-sm font-medium text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc]"
+            >
+              Log in / Sign up
+            </Link>
+          </>
+        )}
+      </div>
       <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
         <Image
           className="dark:invert"
