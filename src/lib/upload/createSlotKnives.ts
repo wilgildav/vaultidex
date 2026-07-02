@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Knife } from "@/types/knife";
 import { cropIntoSlots } from "./cropSlots";
 
 type CreateSlotKnivesArgs = {
@@ -11,19 +12,20 @@ type CreateSlotKnivesArgs = {
 
 // Crops the front/back batch photos into per-slot images, uploads each
 // pair, and creates one draft knife row per slot linking back to them.
+// Returns the created rows, ordered by slot position.
 export async function createSlotKnives({
   supabase,
   userId,
   batchId,
   frontFile,
   backFile,
-}: CreateSlotKnivesArgs): Promise<void> {
+}: CreateSlotKnivesArgs): Promise<Knife[]> {
   const [frontSlots, backSlots] = await Promise.all([
     cropIntoSlots(frontFile),
     cropIntoSlots(backFile),
   ]);
 
-  await Promise.all(
+  const created = await Promise.all(
     frontSlots.map(async (frontBlob, index) => {
       const slotPosition = index + 1;
       const backBlob = backSlots[index];
@@ -42,13 +44,21 @@ export async function createSlotKnives({
       if (frontUpload.error) throw frontUpload.error;
       if (backUpload.error) throw backUpload.error;
 
-      const { error: insertError } = await supabase.from("knives").insert({
-        upload_batch_id: batchId,
-        slot_position: slotPosition,
-        front_image_path: frontPath,
-        back_image_path: backPath,
-      });
+      const { data: inserted, error: insertError } = await supabase
+        .from("knives")
+        .insert({
+          upload_batch_id: batchId,
+          slot_position: slotPosition,
+          front_image_path: frontPath,
+          back_image_path: backPath,
+        })
+        .select()
+        .single();
       if (insertError) throw insertError;
+
+      return inserted as Knife;
     }),
   );
+
+  return created.sort((a, b) => (a.slot_position ?? 0) - (b.slot_position ?? 0));
 }

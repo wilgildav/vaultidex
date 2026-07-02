@@ -4,6 +4,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { createSlotKnives } from "@/lib/upload/createSlotKnives";
+import type { Knife } from "@/types/knife";
+import BatchReview from "./BatchReview";
 import PhotoCaptureSlot from "./PhotoCaptureSlot";
 
 function extensionForType(type: string): string {
@@ -21,6 +23,7 @@ export default function UploadBatchForm({ userId }: { userId: string }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [createdKnives, setCreatedKnives] = useState<Knife[] | null>(null);
 
   const canSubmit = !!frontFile && !!backFile && !submitting;
 
@@ -79,13 +82,14 @@ export default function UploadBatchForm({ userId }: { userId: string }) {
     }
 
     try {
-      await createSlotKnives({
+      const knives = await createSlotKnives({
         supabase,
         userId,
         batchId: batch.id,
         frontFile,
         backFile,
       });
+      setCreatedKnives(knives);
     } catch (slotError) {
       setError(
         slotError instanceof Error
@@ -106,32 +110,36 @@ export default function UploadBatchForm({ userId }: { userId: string }) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-8">
-      <PhotoCaptureSlot
-        label="Front of your knives"
-        file={frontFile}
-        onChange={setFrontFile}
-      />
-      <PhotoCaptureSlot
-        label="Back of your knives"
-        file={backFile}
-        onChange={setBackFile}
-      />
+    <>
+      <form onSubmit={handleSubmit} className="flex flex-col gap-8">
+        <PhotoCaptureSlot
+          label="Front of your knives"
+          file={frontFile}
+          onChange={setFrontFile}
+        />
+        <PhotoCaptureSlot
+          label="Back of your knives"
+          file={backFile}
+          onChange={setBackFile}
+        />
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
-      {success && (
-        <p className="text-sm text-green-600 dark:text-green-500">
-          {success}
-        </p>
-      )}
+        {error && <p className="text-sm text-red-600">{error}</p>}
+        {success && (
+          <p className="text-sm text-green-600 dark:text-green-500">
+            {success}
+          </p>
+        )}
 
-      <button
-        type="submit"
-        disabled={!canSubmit}
-        className="flex h-12 w-full items-center justify-center rounded-full bg-foreground px-5 font-medium text-background transition-colors hover:bg-[#383838] disabled:opacity-50 dark:hover:bg-[#ccc]"
-      >
-        {submitting ? "Uploading…" : "Submit batch"}
-      </button>
-    </form>
+        <button
+          type="submit"
+          disabled={!canSubmit}
+          className="flex h-12 w-full items-center justify-center rounded-full bg-foreground px-5 font-medium text-background transition-colors hover:bg-[#383838] disabled:opacity-50 dark:hover:bg-[#ccc]"
+        >
+          {submitting ? "Uploading…" : "Submit batch"}
+        </button>
+      </form>
+
+      {createdKnives && <BatchReview initialKnives={createdKnives} />}
+    </>
   );
 }
