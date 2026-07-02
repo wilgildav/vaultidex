@@ -3,19 +3,9 @@ import { SLOT_COUNT } from "@/lib/upload/constants";
 
 export type ImageInput = { buffer: Buffer; mimeType: string };
 
-export type SlotImageSet = {
-  fullCrop: ImageInput;
-  stampZone: ImageInput;
-  gridTiles: ImageInput[];
-};
+export type PreparedImage = { image: Sharp; width: number; height: number };
 
-// Rough guess at where a ricasso/tang stamp tends to sit when a knife is
-// laid out lengthwise within its slot: a band around the vertical middle.
-const STAMP_ZONE_HEIGHT_FRACTION = 0.45;
-
-const GRID_COLUMNS = 2;
-const GRID_ROWS = 3;
-const GRID_OVERLAP = 0.25;
+export type MarkLocation = { x: number; y: number };
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -28,65 +18,67 @@ async function extractJpeg(base: Sharp, region: Region): Promise<ImageInput> {
   return { buffer, mimeType: "image/jpeg" };
 }
 
-// Builds three kinds of crops for one knife slot, all sourced from the
-// original full-resolution batch photo (not the already-cropped, already
-// re-compressed per-slot image) so we lose as little detail as possible:
-//   - fullCrop: the whole knife, same 1/5-width slice as before.
-//   - stampZone: a tighter guess at the likely marking location.
-//   - gridTiles: a 2x3 overlapping grid covering the whole slot, so small
-//     text has a good chance of landing at high effective resolution in at
-//     least one tile without needing to know exactly where it is.
-export async function buildSlotImageSet(
-  fullImageBuffer: Buffer,
-  slotPosition: number,
-): Promise<SlotImageSet> {
-  // .rotate() with no args auto-applies EXIF orientation (relevant for
-  // photos picked from the library rather than captured in-app) so width/
-  // height and all extract regions below are computed against the image
-  // as it actually displays, not its raw sensor orientation.
-  const oriented = sharp(fullImageBuffer).rotate();
-  const metadata = await oriented.metadata();
-  const fullWidth = metadata.width ?? 0;
-  const fullHeight = metadata.height ?? 0;
-  if (!fullWidth || !fullHeight) {
+// Decodes an image once and auto-applies EXIF orientation (relevant for
+// photos picked from the library rather than captured in-app), so every
+// crop taken from it afterward is computed against the image as it
+// actually displays, not its raw sensor orientation.
+export async function prepareImage(buffer: Buffer): Promise<PreparedImage> {
+  const image = sharp(buffer).rotate();
+  const metadata = await image.metadata();
+  const width = metadata.width ?? 0;
+  const height = metadata.height ?? 0;
+  if (!width || !height) {
     throw new Error("Could not read image dimensions.");
   }
+  return { image, width, height };
+}
 
-  const slotWidthExact = fullWidth / SLOT_COUNT;
-  const slotLeft = clamp(Math.round((slotPosition - 1) * slotWidthExact), 0, fullWidth - 1);
-  const slotWidth = clamp(Math.round(slotWidthExact), 1, fullWidth - slotLeft);
+function slotBounds(prepared: PreparedImage, slotPosition: number): Region {
+  const slotWidthExact = prepared.width / SLOT_COUNT;
+  const left = clamp(Math.round((slotPosition - 1) * slotWidthExact), 0, prepared.width - 1);
+  const width = clamp(Math.round(slotWidthExact), 1, prepared.width - left);
+  return { left, top: 0, width, height: prepared.height };
+}
 
-  const fullCrop = await extractJpeg(oriented, {
-    left: slotLeft,
-    top: 0,
-    width: slotWidth,
-    height: fullHeight,
-  });
+// The whole-knife view for one slot, sourced from the original
+// full-resolution batch photo rather than the already-cropped,
+// already-recompressed per-slot image saved at upload time.
+export async function extractSlotFullCrop(
+  prepared: PreparedImage,
+  slotPosition: number,
+): Promise<ImageInput> {
+  return extractJpeg(prepared.image, slotBounds(prepared, slotPosition));
+}
 
-  const stampZoneHeight = clamp(Math.round(fullHeight * STAMP_ZONE_HEIGHT_FRACTION), 1, fullHeight);
-  const stampZoneTop = clamp(Math.round((fullHeight - stampZoneHeight) / 2), 0, fullHeight - stampZoneHeight);
-  const stampZone = await extractJpeg(oriented, {
-    left: slotLeft,
-    top: stampZoneTop,
-    width: slotWidth,
-    height: stampZoneHeight,
-  });
+// A tight, upscaled crop around a specific point Gemini reported seeing a
+// marking at (fractional x/y within the slot), so small dense text gets
+// dedicated pixels instead of being diluted across the whole knife photo.
+// The window size is generous since we only have a center point, not a
+// bounding box.
+export async function extractMarkCrop(
+  prepared: PreparedImage,
+  slotPosition: number,
+  mark: MarkLocation,
+): Promise<ImageInput> {
+  const slot = slotBounds(prepared, slotPosition);
+  const cropWidth = clamp(Math.round(slot.width * 0.7), 1, slot.width);
+  const cropHeight = clamp(Math.round(prepared.height * 0.15), 1, prepared.height);
 
-  const baseTileW = slotWidth / GRID_COLUMNS;
-  const baseTileH = fullHeight / GRID_ROWS;
-  const tileW = clamp(Math.round(baseTileW * (1 + GRID_OVERLAP)), 1, slotWidth);
-  const tileH = clamp(Math.round(baseTileH * (1 + GRID_OVERLAP)), 1, fullHeight);
+  const centerX = slot.left + clamp(mark.x, 0, 1) * slot.width;
+  const centerY = clamp(mark.y, 0, 1) * prepared.height;
 
-  const gridTiles: ImageInput[] = [];
-  for (let row = 0; row < GRID_ROWS; row++) {
-    for (let col = 0; col < GRID_COLUMNS; col++) {
-      const centerX = slotLeft + (col + 0.5) * baseTileW;
-      const centerY = (row + 0.5) * baseTileH;
-      const left = clamp(Math.round(centerX - tileW / 2), slotLeft, slotLeft + slotWidth - tileW);
-      const top = clamp(Math.round(centerY - tileH / 2), 0, fullHeight - tileH);
-      gridTiles.push(await extractJpeg(oriented, { left, top, width: tileW, height: tileH }));
-    }
-  }
+  const left = clamp(
+    Math.round(centerX - cropWidth / 2),
+    slot.left,
+    slot.left + slot.width - cropWidth,
+  );
+  const top = clamp(Math.round(centerY - cropHeight / 2), 0, prepared.height - cropHeight);
 
-  return { fullCrop, stampZone, gridTiles };
+  const buffer = await prepared.image
+    .clone()
+    .extract({ left, top, width: cropWidth, height: cropHeight })
+    .resize({ width: cropWidth * 3 })
+    .jpeg({ quality: 95 })
+    .toBuffer();
+  return { buffer, mimeType: "image/jpeg" };
 }

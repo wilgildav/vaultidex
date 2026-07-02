@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { identifyKnife } from "@/lib/gemini/identifyKnife";
-import { buildSlotImageSet } from "@/lib/gemini/multiCrop";
 
 export async function POST(
   _request: Request,
@@ -43,9 +42,9 @@ export async function POST(
     return NextResponse.json({ error: "Could not find this batch's source photos." }, { status: 404 });
   }
 
-  // Multi-crop generation reads from the original full-resolution batch
-  // photo (not the already-cropped, already-recompressed per-slot image)
-  // so the zoomed-in crops lose as little detail as possible.
+  // Crops are generated from the original full-resolution batch photo (not
+  // the already-cropped, already-recompressed per-slot image) so any
+  // zoomed-in crops lose as little detail as possible.
   const [frontDownload, backDownload] = await Promise.all([
     supabase.storage.from("knife-photos").download(batch.front_image_path),
     supabase.storage.from("knife-photos").download(batch.back_image_path),
@@ -59,12 +58,11 @@ export async function POST(
   }
 
   try {
-    const [frontSet, backSet] = await Promise.all([
-      buildSlotImageSet(Buffer.from(await frontDownload.data.arrayBuffer()), knife.slot_position),
-      buildSlotImageSet(Buffer.from(await backDownload.data.arrayBuffer()), knife.slot_position),
-    ]);
-
-    const result = await identifyKnife(frontSet, backSet);
+    const result = await identifyKnife(
+      Buffer.from(await frontDownload.data.arrayBuffer()),
+      Buffer.from(await backDownload.data.arrayBuffer()),
+      knife.slot_position,
+    );
 
     if (!result.knifePresent) {
       // Clear out any stale identification from a previous run — otherwise

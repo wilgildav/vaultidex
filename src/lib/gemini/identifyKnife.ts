@@ -6,9 +6,16 @@ import {
   createUserContent,
   type Schema,
 } from "@google/genai";
-import type { ImageInput, SlotImageSet } from "./multiCrop";
+import {
+  prepareImage,
+  extractSlotFullCrop,
+  extractMarkCrop,
+  type ImageInput,
+  type MarkLocation,
+} from "./multiCrop";
 
 const MODEL = "gemini-2.5-flash";
+const MAX_MARKS_PER_SIDE = 3;
 
 function getClient(): GoogleGenAI {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -35,34 +42,6 @@ function imageParts(front: ImageInput, back: ImageInput) {
   ];
 }
 
-const GRID_LABELS = [
-  "top-left",
-  "top-right",
-  "middle-left",
-  "middle-right",
-  "bottom-left",
-  "bottom-right",
-];
-
-// Labels every crop we have for one side (front/back) so Gemini can
-// cross-reference the wide view against the zoomed-in ones instead of
-// treating 8 images as unrelated inputs.
-function multiCropParts(side: "FRONT" | "BACK", set: SlotImageSet) {
-  const parts: (string | ReturnType<typeof imagePart>)[] = [
-    `${side} — full slot view:`,
-    imagePart(set.fullCrop),
-    `${side} — likely stamp-zone close-up (a guess at where a marking usually sits; may not contain it):`,
-    imagePart(set.stampZone),
-  ];
-  set.gridTiles.forEach((tile, i) => {
-    parts.push(
-      `${side} — grid tile ${i + 1} of ${set.gridTiles.length} (${GRID_LABELS[i] ?? i} region):`,
-      imagePart(tile),
-    );
-  });
-  return parts;
-}
-
 const CONFIDENCE_SCHEMA: Schema = {
   type: Type.STRING,
   format: "enum",
@@ -83,6 +62,49 @@ const PRESENCE_SCHEMA: Schema = {
     },
   },
   required: ["knife_present", "reason"],
+};
+
+const MARK_SCHEMA: Schema = {
+  type: Type.OBJECT,
+  properties: {
+    x: {
+      type: Type.NUMBER,
+      minimum: 0,
+      maximum: 1,
+      description: "Horizontal center of the mark, as a fraction of image width (0=left, 1=right).",
+    },
+    y: {
+      type: Type.NUMBER,
+      minimum: 0,
+      maximum: 1,
+      description: "Vertical center of the mark, as a fraction of image height (0=top, 1=bottom).",
+    },
+    description: {
+      type: Type.STRING,
+      description: "Brief description, e.g. 'small printed text block' or 'embossed word'.",
+    },
+  },
+  required: ["x", "y", "description"],
+};
+
+const LOCATE_SCHEMA: Schema = {
+  type: Type.OBJECT,
+  properties: {
+    front_marks: {
+      type: Type.ARRAY,
+      items: MARK_SCHEMA,
+      maxItems: String(MAX_MARKS_PER_SIDE),
+      description:
+        "Up to 3 distinct locations on the FRONT image with visible text, numbers, stamps, engravings, or printed markings. Empty array if none.",
+    },
+    back_marks: {
+      type: Type.ARRAY,
+      items: MARK_SCHEMA,
+      maxItems: String(MAX_MARKS_PER_SIDE),
+      description: "Same, for the BACK image.",
+    },
+  },
+  required: ["front_marks", "back_marks"],
 };
 
 const TRANSCRIPTION_SCHEMA: Schema = {
@@ -207,6 +229,7 @@ export type IdentifyKnifeResult =
       knifePresent: true;
       presenceReason: string;
       transcription: string;
+      locatedMarks: { front: number; back: number };
       identification: KnifeIdentification;
       consistencyCheck: ConsistencyCheck;
     };
@@ -232,58 +255,97 @@ async function generateJson<T>(
   return JSON.parse(text) as T;
 }
 
+const LOCATE_PROMPT =
+  "Look at the full view of this knife slot (front and back) and identify up to 3 distinct " +
+  "areas on each side where you can see any text, numbers, stamps, engravings, or printed " +
+  "markings — even if you can't read them clearly yet, just note where they are. For each, " +
+  "report its approximate center position as a fraction of that image's width (x: 0=left, " +
+  "1=right) and height (y: 0=top, 1=bottom). If a side has no visible marking at all, return " +
+  "an empty list for that side.";
+
 const TRANSCRIPTION_PROMPT =
-  "Transcribe exactly what text, numbers, marks, stamps, or engravings you can see on this knife. " +
-  "You're given a full view of the slot plus several zoomed-in close-ups (a likely stamp-zone guess " +
-  "and an overlapping grid of tiles covering the whole slot) — use the close-ups to read fine detail, " +
-  "and the full view for context on where things are. Only transcribe characters you can read with " +
-  "genuine confidence. If a character or word is blurry, ambiguous, or only partially visible, write " +
-  "'[unclear]' for that portion instead of guessing. Do not complete a partial mark into a plausible-" +
-  "sounding brand, maker, or model name unless every character is clearly legible — a well-known knife " +
-  "brand is not more likely to be correct just because it's familiar. It is far better to report a mark " +
-  "as illegible than to guess incorrectly. If nothing is legible at all, say so explicitly.";
+  "Transcribe exactly what text, numbers, marks, stamps, or engravings you can see on this " +
+  "knife. You're given a full view of the slot plus zoomed-in close-ups of specific areas " +
+  "already identified as likely containing markings — use the close-ups to read fine detail, " +
+  "and the full view for context on where things are. Only transcribe characters you can read " +
+  "with genuine confidence. If a character or word is blurry, ambiguous, or only partially " +
+  "visible, write '[unclear]' for that portion instead of guessing. Do not complete a partial " +
+  "mark into a plausible-sounding brand, maker, or model name unless every character is " +
+  "clearly legible — a well-known brand is not more likely to be correct just because it's " +
+  "familiar. It is far better to report a mark as illegible than to guess incorrectly. If " +
+  "nothing is legible at all, say so explicitly.";
 
 async function runTranscription(
   ai: GoogleGenAI,
-  front: SlotImageSet,
-  back: SlotImageSet,
+  frontFull: ImageInput,
+  backFull: ImageInput,
+  frontMarkCrops: ImageInput[],
+  backMarkCrops: ImageInput[],
 ): Promise<string> {
+  const parts: (string | ReturnType<typeof imagePart>)[] = [
+    "This is one knife, shown from multiple angles and zoom levels.",
+    "FRONT — full slot view:",
+    imagePart(frontFull),
+  ];
+  frontMarkCrops.forEach((crop, i) => {
+    parts.push(
+      `FRONT — zoomed close-up ${i + 1} of ${frontMarkCrops.length} (a located area of interest):`,
+      imagePart(crop),
+    );
+  });
+  parts.push("BACK — full slot view:", imagePart(backFull));
+  backMarkCrops.forEach((crop, i) => {
+    parts.push(
+      `BACK — zoomed close-up ${i + 1} of ${backMarkCrops.length} (a located area of interest):`,
+      imagePart(crop),
+    );
+  });
+  parts.push(TRANSCRIPTION_PROMPT);
+
   const { transcription } = await generateJson<{ transcription: string }>(
     ai,
-    [
-      "This is one knife, shown from multiple angles and zoom levels.",
-      ...multiCropParts("FRONT", front),
-      ...multiCropParts("BACK", back),
-      TRANSCRIPTION_PROMPT,
-    ],
+    parts,
     TRANSCRIPTION_SCHEMA,
   );
   return transcription;
 }
 
-// Three-stage pipeline for a single knife slot, plus an optional fourth
-// stage for borderline results:
+// Pipeline for a single knife slot:
 //   1. Presence check — is a knife even here? Short-circuits on empty slots.
-//   2. Transcription — literal reading of visible text/marks, using both a
-//      full view and multiple zoomed-in crops so small stamps have a
-//      chance of appearing at high effective resolution somewhere.
-//   3. Identification — uses the images + transcription to fill in fields,
+//   2. Locate — ask Gemini roughly where on the blade/handle any marking
+//      appears, in both the front and back full views.
+//   3. Zoom — crop tightly around each located point, from the original
+//      full-resolution photo, so small dense text gets dedicated pixels
+//      instead of being diluted across the whole knife.
+//   4. Transcription — literal reading, using the full views plus the
+//      located zoomed crops.
+//   5. Identification — uses the images + transcription to fill in fields,
 //      each with a high/medium/low confidence where applicable.
-//   4. Self-consistency check (only if maker/model confidence came back
-//      "medium") — re-run transcription twice more and see if independent
-//      attempts agree; agreement upgrades to high confidence, disagreement
+//   6. Self-consistency check (only if maker/model confidence came back
+//      "medium") — re-run transcription twice more using the same located
+//      crops; agreement upgrades to high confidence, disagreement
 //      downgrades to low confidence and records the differing readings.
 export async function identifyKnife(
-  front: SlotImageSet,
-  back: SlotImageSet,
+  frontBuffer: Buffer,
+  backBuffer: Buffer,
+  slotPosition: number,
 ): Promise<IdentifyKnifeResult> {
   const ai = getClient();
+
+  const [frontPrepared, backPrepared] = await Promise.all([
+    prepareImage(frontBuffer),
+    prepareImage(backBuffer),
+  ]);
+  const [frontFull, backFull] = await Promise.all([
+    extractSlotFullCrop(frontPrepared, slotPosition),
+    extractSlotFullCrop(backPrepared, slotPosition),
+  ]);
 
   const presence = await generateJson<{ knife_present: boolean; reason: string }>(
     ai,
     [
       "You are looking at one slot from a flat-lay photo of up to five pocketknives, laid out side by side and photographed from directly above. This is a single cropped vertical slice from that photo, showing the front and back of whatever is in this slot.",
-      ...imageParts(front.fullCrop, back.fullCrop),
+      ...imageParts(frontFull, backFull),
       "Is a single physical knife clearly present and visible in this slot? Answer false for an empty/background slot, a non-knife object, or an image too unclear to tell.",
     ],
     PRESENCE_SCHEMA,
@@ -293,18 +355,41 @@ export async function identifyKnife(
     return { knifePresent: false, presenceReason: presence.reason };
   }
 
-  const transcription = await runTranscription(ai, front, back);
+  const located = await generateJson<{ front_marks: MarkLocation[]; back_marks: MarkLocation[] }>(
+    ai,
+    [...imageParts(frontFull, backFull), LOCATE_PROMPT],
+    LOCATE_SCHEMA,
+  );
+
+  const [frontMarkCrops, backMarkCrops] = await Promise.all([
+    Promise.all(
+      located.front_marks.map((mark) => extractMarkCrop(frontPrepared, slotPosition, mark)),
+    ),
+    Promise.all(
+      located.back_marks.map((mark) => extractMarkCrop(backPrepared, slotPosition, mark)),
+    ),
+  ]);
+
+  const transcription = await runTranscription(
+    ai,
+    frontFull,
+    backFull,
+    frontMarkCrops,
+    backMarkCrops,
+  );
 
   const identification = await generateJson<KnifeIdentification>(
     ai,
     [
       "This is the front and back photo of a single pocketknife, along with a literal transcription of the text/marks visible on it.",
-      ...imageParts(front.fullCrop, back.fullCrop),
+      ...imageParts(frontFull, backFull),
       `Transcription of visible marks:\n${transcription}`,
       "Using both the images and the transcription, identify this knife. For maker, model, blade_steel, and handle_material, also give a confidence level (high/medium/low) for how sure you are. Estimate blade_length_in and overall_length_open_in in inches by comparing the knife's proportions to typical pocketknife dimensions. Use null for anything you cannot determine — do not guess just to fill a field.",
     ],
     IDENTIFICATION_SCHEMA,
   );
+
+  const locatedMarks = { front: frontMarkCrops.length, back: backMarkCrops.length };
 
   const needsConsistencyCheck =
     identification.maker_confidence === "medium" || identification.model_confidence === "medium";
@@ -314,14 +399,15 @@ export async function identifyKnife(
       knifePresent: true,
       presenceReason: presence.reason,
       transcription,
+      locatedMarks,
       identification,
       consistencyCheck: { ran: false },
     };
   }
 
   const [transcription2, transcription3] = await Promise.all([
-    runTranscription(ai, front, back),
-    runTranscription(ai, front, back),
+    runTranscription(ai, frontFull, backFull, frontMarkCrops, backMarkCrops),
+    runTranscription(ai, frontFull, backFull, frontMarkCrops, backMarkCrops),
   ]);
   const transcriptions = [transcription, transcription2, transcription3];
 
@@ -355,6 +441,7 @@ export async function identifyKnife(
     knifePresent: true,
     presenceReason: presence.reason,
     transcription,
+    locatedMarks,
     identification: adjusted,
     consistencyCheck: { ran: true, agreed: consistency.agree, transcriptions },
   };
