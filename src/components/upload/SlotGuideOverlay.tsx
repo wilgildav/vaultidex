@@ -1,4 +1,4 @@
-const SLOT_COUNT = 5;
+import { SLOT_COUNT } from "@/lib/upload/constants";
 
 type Props = {
   tip?: string;

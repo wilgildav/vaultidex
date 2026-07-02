@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { createSlotKnives } from "@/lib/upload/createSlotKnives";
 import PhotoCaptureSlot from "./PhotoCaptureSlot";
 
 function extensionForType(type: string): string {
@@ -77,7 +78,27 @@ export default function UploadBatchForm({ userId }: { userId: string }) {
       return;
     }
 
-    setSuccess("Batch uploaded. Feel free to start another one below.");
+    try {
+      await createSlotKnives({
+        supabase,
+        userId,
+        batchId: batch.id,
+        frontFile,
+        backFile,
+      });
+    } catch (slotError) {
+      setError(
+        slotError instanceof Error
+          ? slotError.message
+          : "Could not create knife entries for this batch.",
+      );
+      setSubmitting(false);
+      return;
+    }
+
+    setSuccess(
+      "Batch uploaded — 5 draft knife entries created. Feel free to start another batch below.",
+    );
     setFrontFile(null);
     setBackFile(null);
     setSubmitting(false);
