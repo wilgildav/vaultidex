@@ -59,8 +59,8 @@ export default function LoginPage() {
         </h1>
         <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
           {mode === "login"
-            ? "Welcome back to Vaultadex."
-            : "Create your Vaultadex account."}
+            ? "Welcome back to Vaultidex."
+            : "Create your Vaultidex account."}
         </p>
 
         <form onSubmit={handleSubmit} className="mt-6 flex flex-col gap-4">
