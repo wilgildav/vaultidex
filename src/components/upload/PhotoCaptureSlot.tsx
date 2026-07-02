@@ -33,6 +33,15 @@ export default function PhotoCaptureSlot({ label, file, onChange }: Props) {
     };
   }, []);
 
+  // Attach the stream once the <video> element has actually mounted, rather
+  // than guessing with requestAnimationFrame — on slower devices the old
+  // approach could race the DOM commit and leave the viewfinder blank.
+  useEffect(() => {
+    if (cameraOpen && videoRef.current && streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+    }
+  }, [cameraOpen]);
+
   async function openCamera() {
     setCameraError(null);
     try {
@@ -42,11 +51,6 @@ export default function PhotoCaptureSlot({ label, file, onChange }: Props) {
       });
       streamRef.current = stream;
       setCameraOpen(true);
-      requestAnimationFrame(() => {
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-        }
-      });
     } catch {
       setCameraError('Camera unavailable — use "Choose from Library" instead.');
     }
@@ -108,7 +112,7 @@ export default function PhotoCaptureSlot({ label, file, onChange }: Props) {
             muted
             className="h-full w-full object-cover"
           />
-          <SlotGuideOverlay />
+          <SlotGuideOverlay tip="Hold your phone level and at a consistent height" />
           <div className="absolute inset-x-0 bottom-3 flex justify-center gap-3">
             <button
               type="button"
