@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import KnifeDetailView, { type DetailPhoto } from "@/components/knife/KnifeDetailView";
+import AccountMenu from "@/components/nav/AccountMenu";
 
 export default async function KnifeDetailPage({
   params,
@@ -14,7 +15,7 @@ export default async function KnifeDetailPage({
   } = await supabase.auth.getUser();
 
   if (!user) {
-    redirect("/login");
+    redirect("/");
   }
 
   const { data: knife, error } = await supabase
@@ -64,6 +65,7 @@ export default async function KnifeDetailPage({
 
   return (
     <div className="flex flex-1 justify-center bg-zinc-50 px-4 py-10 dark:bg-black">
+      <AccountMenu userEmail={user.email ?? ""} />
       <div className="w-full max-w-xl">
         <KnifeDetailView knife={knife} initialPhotos={photos} />
       </div>

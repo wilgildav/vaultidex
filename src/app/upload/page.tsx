@@ -1,7 +1,7 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import UploadBatchForm from "@/components/upload/UploadBatchForm";
+import AccountMenu from "@/components/nav/AccountMenu";
 
 export default async function UploadPage() {
   const supabase = await createClient();
@@ -10,19 +10,14 @@ export default async function UploadPage() {
   } = await supabase.auth.getUser();
 
   if (!user) {
-    redirect("/login");
+    redirect("/");
   }
 
   return (
     <div className="flex flex-1 justify-center bg-zinc-50 px-4 py-10 dark:bg-black">
+      <AccountMenu userEmail={user.email ?? ""} />
       <div className="w-full max-w-xl">
-        <Link
-          href="/collection"
-          className="w-fit text-sm text-zinc-600 underline hover:text-black dark:text-zinc-400 dark:hover:text-zinc-200"
-        >
-          ← Back to Vault
-        </Link>
-        <h1 className="mt-4 text-2xl font-semibold text-black dark:text-zinc-50">
+        <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">
           Upload knives
         </h1>
         <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">

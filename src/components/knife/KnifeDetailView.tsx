@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
 import type { Knife } from "@/types/knife";
 import { SpecField, YearRangeField } from "@/components/knife/SpecFields";
 import AddPhotoButton from "@/components/knife/AddPhotoButton";
@@ -102,13 +101,6 @@ export default function KnifeDetailView({
 
   return (
     <div className="flex flex-col gap-4">
-      <Link
-        href="/collection"
-        className="w-fit text-sm text-zinc-600 underline hover:text-black dark:text-zinc-400 dark:hover:text-zinc-200"
-      >
-        ← Back to Vault
-      </Link>
-
       <div className="flex flex-col gap-4 rounded-lg border border-black/[.08] bg-white p-6 dark:border-white/[.145] dark:bg-zinc-950">
         <div className="flex items-center justify-between">
           <h1 className="text-lg font-semibold text-black dark:text-zinc-50">

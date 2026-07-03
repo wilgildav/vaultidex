@@ -24,3 +24,36 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Netflix-style backdrop rows on the logged-out landing page. Each row's
+   track is rendered twice back-to-back (see KnifeCarousel), so animating
+   to exactly -50% loops seamlessly. */
+@keyframes marquee-left {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@keyframes marquee-right {
+  from {
+    transform: translateX(-50%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+.animate-marquee-left {
+  animation: marquee-left 38s linear infinite;
+}
+
+.animate-marquee-left-slow {
+  animation: marquee-left 55s linear infinite;
+}
+
+.animate-marquee-right {
+  animation: marquee-right 46s linear infinite;
+}

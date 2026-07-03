@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import VaultBrowser from "@/components/collection/VaultBrowser";
+import AccountMenu from "@/components/nav/AccountMenu";
 
 export default async function CollectionPage() {
   const supabase = await createClient();
@@ -10,7 +11,7 @@ export default async function CollectionPage() {
   } = await supabase.auth.getUser();
 
   if (!user) {
-    redirect("/login");
+    redirect("/");
   }
 
   const { data: knives } = await supabase
@@ -35,6 +36,7 @@ export default async function CollectionPage() {
 
   return (
     <div className="flex flex-1 justify-center bg-zinc-50 px-4 py-10 dark:bg-black">
+      <AccountMenu userEmail={user.email ?? ""} />
       <div className="w-full max-w-4xl">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">Your Vault</h1>
