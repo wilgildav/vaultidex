@@ -1,4 +1,4 @@
--- Vaultadex core schema: upload_batches + knives, with RLS.
+-- Vaultidex core schema: upload_batches + knives, with RLS.
 -- Run this once in the Supabase SQL Editor (Project > SQL Editor > New query).
 
 create extension if not exists pgcrypto;
