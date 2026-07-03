@@ -1,6 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import KnifeDetailView from "@/components/knife/KnifeDetailView";
+import KnifeDetailView, { type DetailPhoto } from "@/components/knife/KnifeDetailView";
 
 export default async function KnifeDetailPage({
   params,
@@ -31,22 +31,41 @@ export default async function KnifeDetailPage({
     notFound();
   }
 
-  const [frontUrl, backUrl] = await Promise.all([
+  const { data: extraPhotoRows } = await supabase
+    .from("knife_extra_photos")
+    .select("*")
+    .eq("knife_id", id)
+    .order("created_at", { ascending: true });
+
+  const [frontUrl, backUrl, extraUrls] = await Promise.all([
     knife.front_image_path
       ? supabase.storage.from("knife-photos").createSignedUrl(knife.front_image_path, 3600)
       : Promise.resolve({ data: null }),
     knife.back_image_path
       ? supabase.storage.from("knife-photos").createSignedUrl(knife.back_image_path, 3600)
       : Promise.resolve({ data: null }),
+    Promise.all(
+      (extraPhotoRows ?? []).map((photo) =>
+        supabase.storage.from("knife-photos").createSignedUrl(photo.storage_path, 3600),
+      ),
+    ),
   ]);
+
+  const photos: DetailPhoto[] = [];
+  if (knife.front_image_path) {
+    photos.push({ key: "front", path: knife.front_image_path, url: frontUrl.data?.signedUrl });
+  }
+  if (knife.back_image_path) {
+    photos.push({ key: "back", path: knife.back_image_path, url: backUrl.data?.signedUrl });
+  }
+  (extraPhotoRows ?? []).forEach((photo, i) => {
+    photos.push({ key: photo.id, path: photo.storage_path, url: extraUrls[i]?.data?.signedUrl });
+  });
 
   return (
     <div className="flex flex-1 justify-center bg-zinc-50 px-4 py-10 dark:bg-black">
       <div className="w-full max-w-xl">
-        <KnifeDetailView
-          knife={knife}
-          thumbnails={{ front: frontUrl.data?.signedUrl, back: backUrl.data?.signedUrl }}
-        />
+        <KnifeDetailView knife={knife} initialPhotos={photos} />
       </div>
     </div>
   );

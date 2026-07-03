@@ -58,10 +58,9 @@ export default async function CollectionPage() {
   const thumbnails = Object.fromEntries(
     await Promise.all(
       confirmedKnives.map(async (knife) => {
-        if (!knife.front_image_path) return [knife.id, undefined] as const;
-        const { data } = await supabase.storage
-          .from("knife-photos")
-          .createSignedUrl(knife.front_image_path, 3600);
+        const path = knife.key_photo_path ?? knife.front_image_path;
+        if (!path) return [knife.id, undefined] as const;
+        const { data } = await supabase.storage.from("knife-photos").createSignedUrl(path, 3600);
         return [knife.id, data?.signedUrl] as const;
       }),
     ),

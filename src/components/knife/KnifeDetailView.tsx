@@ -4,8 +4,9 @@ import { useState } from "react";
 import Link from "next/link";
 import type { Knife } from "@/types/knife";
 import { SpecField, YearRangeField } from "@/components/knife/SpecFields";
+import AddPhotoButton from "@/components/knife/AddPhotoButton";
 
-type Thumbnails = { front?: string; back?: string };
+export type DetailPhoto = { key: string; path: string; url?: string };
 
 type EditableFields = {
   maker: string;
@@ -42,22 +43,40 @@ function fieldsFromKnife(knife: Knife): EditableFields {
 
 export default function KnifeDetailView({
   knife,
-  thumbnails,
+  initialPhotos,
 }: {
   knife: Knife;
-  thumbnails: Thumbnails;
+  initialPhotos: DetailPhoto[];
 }) {
   const [current, setCurrent] = useState(knife);
+  const [photos, setPhotos] = useState(initialPhotos);
   const [edits, setEdits] = useState<EditableFields | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [justSaved, setJustSaved] = useState(false);
+  const [keyPhotoError, setKeyPhotoError] = useState<string | null>(null);
 
   const fields = edits ?? fieldsFromKnife(current);
+  const keyPhotoPath = current.key_photo_path ?? current.front_image_path ?? current.back_image_path;
 
   function setField<K extends keyof EditableFields>(field: K, value: EditableFields[K]) {
     setEdits({ ...fields, [field]: value });
     setJustSaved(false);
+  }
+
+  async function setKeyPhoto(path: string) {
+    setKeyPhotoError(null);
+    const res = await fetch(`/api/knives/${current.id}/key-photo`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      setKeyPhotoError(body.error ?? "Could not set key photo.");
+    } else {
+      setCurrent(body.knife);
+    }
   }
 
   async function handleSave() {
@@ -115,28 +134,52 @@ export default function KnifeDetailView({
           </div>
         </div>
 
-        <div className="flex gap-2">
-          {thumbnails.front && (
-            // eslint-disable-next-line @next/next/no-img-element -- private, signed-URL thumbnail
-            <img
-              src={thumbnails.front}
-              alt="Front"
-              className="h-40 w-32 rounded object-cover"
+        <div className="flex flex-col gap-2">
+          <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Photos</span>
+          <div className="flex flex-wrap gap-3">
+            {photos.map((photo) => {
+              const isKey = photo.path === keyPhotoPath;
+              return (
+                <div key={photo.key} className="flex flex-col items-center gap-1">
+                  {photo.url ? (
+                    // eslint-disable-next-line @next/next/no-img-element -- private, signed-URL thumbnail
+                    <img
+                      src={photo.url}
+                      alt=""
+                      className={`h-40 w-32 rounded object-cover ${
+                        isKey ? "ring-2 ring-amber-400" : ""
+                      }`}
+                    />
+                  ) : (
+                    <div className="flex h-40 w-32 items-center justify-center rounded bg-zinc-100 text-xs text-zinc-400 dark:bg-zinc-900 dark:text-zinc-600">
+                      No photo
+                    </div>
+                  )}
+                  {isKey ? (
+                    <span className="text-[10px] font-medium text-amber-600 dark:text-amber-400">
+                      Key photo
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setKeyPhoto(photo.path)}
+                      className="text-[10px] font-medium text-zinc-500 underline hover:text-black dark:text-zinc-400 dark:hover:text-zinc-200"
+                    >
+                      Set as key
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+            <AddPhotoButton
+              knifeId={current.id}
+              sizeClassName="h-40 w-32"
+              onUploaded={(photo) =>
+                setPhotos((prev) => [...prev, { key: photo.id, path: photo.path, url: photo.url }])
+              }
             />
-          )}
-          {thumbnails.back && (
-            // eslint-disable-next-line @next/next/no-img-element -- private, signed-URL thumbnail
-            <img
-              src={thumbnails.back}
-              alt="Back"
-              className="h-40 w-32 rounded object-cover"
-            />
-          )}
-          {!thumbnails.front && !thumbnails.back && (
-            <div className="flex h-40 w-32 items-center justify-center rounded bg-zinc-100 text-xs text-zinc-400 dark:bg-zinc-900 dark:text-zinc-600">
-              No photo
-            </div>
-          )}
+          </div>
+          {keyPhotoError && <p className="text-xs text-red-600">{keyPhotoError}</p>}
         </div>
 
         <SpecField

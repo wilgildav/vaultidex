@@ -44,6 +44,14 @@ export type Knife = {
   favorite: boolean;
   front_image_path: string | null;
   back_image_path: string | null;
+  key_photo_path: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type KnifeExtraPhoto = {
+  id: string;
+  knife_id: string;
+  storage_path: string;
+  created_at: string;
 };

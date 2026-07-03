@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import type { Knife } from "@/types/knife";
 import { SpecField, YearRangeField } from "@/components/knife/SpecFields";
+import AddPhotoButton, { type UploadedPhoto } from "@/components/knife/AddPhotoButton";
 
 type Thumbnails = Record<string, { front?: string; back?: string }>;
 
@@ -120,11 +121,22 @@ export default function ReviewQueue({
     [knives],
   );
   const [showSkipped, setShowSkipped] = useState(false);
+  // A "not_identified" knife is the AI's call, not the user's — so it stays
+  // in the active queue (giving the user a chance to add a better photo and
+  // retry, or fill it in by hand) until explicitly dismissed. Once
+  // dismissed it behaves like the old "skipped" concept: hidden by default,
+  // revealable with the show/hide toggle below.
+  const [dismissedSkips, setDismissedSkips] = useState<Record<string, boolean>>({});
   const visible = useMemo(
-    () => sorted.filter((k) => showSkipped || k.status !== "not_identified"),
-    [sorted, showSkipped],
+    () =>
+      sorted.filter(
+        (k) => showSkipped || k.status !== "not_identified" || !dismissedSkips[k.id],
+      ),
+    [sorted, showSkipped, dismissedSkips],
   );
-  const skippedCount = sorted.filter((k) => k.status === "not_identified").length;
+  const dismissedCount = sorted.filter(
+    (k) => k.status === "not_identified" && dismissedSkips[k.id],
+  ).length;
 
   const [rawIndex, setIndex] = useState(0);
   // Clamped at read time (rather than via an effect) so a shrinking
@@ -136,6 +148,11 @@ export default function ReviewQueue({
   const [edits, setEdits] = useState<Record<string, EditableFields>>({});
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  // Extra photos (e.g. a closer shot of a tang stamp) a user attaches
+  // mid-review — kept client-side only here since nothing else in this
+  // screen needs to read them back; the detail page re-fetches its own
+  // list from the database once the knife is confirmed.
+  const [extraPhotos, setExtraPhotos] = useState<Record<string, UploadedPhoto[]>>({});
 
   const currentFields = current ? (edits[current.id] ?? fieldsFromKnife(current)) : null;
 
@@ -184,33 +201,15 @@ export default function ReviewQueue({
 
   const confirmedCount = visible.filter((k) => k.status === "confirmed").length;
   const confirmedTotal = sorted.filter((k) => k.status === "confirmed").length;
-  const allReviewed = sorted.length > 0 && confirmedTotal + skippedCount === sorted.length;
+  const allReviewed = sorted.length > 0 && confirmedTotal + dismissedCount === sorted.length;
 
   if (allReviewed) {
     return (
       <BatchComplete
         confirmedCount={confirmedTotal}
-        skippedCount={skippedCount}
+        skippedCount={dismissedCount}
         totalCount={sorted.length}
       />
-    );
-  }
-
-  if (visible.length === 0) {
-    return (
-      <div className="flex flex-col gap-3 rounded-lg border border-black/[.08] bg-white p-6 text-center dark:border-white/[.145] dark:bg-zinc-950">
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          All {sorted.length} knife{sorted.length === 1 ? "" : "s"} in this batch had no clear
-          detection.
-        </p>
-        <button
-          type="button"
-          onClick={() => setShowSkipped(true)}
-          className="mx-auto flex h-9 items-center justify-center rounded-full border border-solid border-black/[.15] px-4 text-sm font-medium transition-colors hover:bg-black/[.04] dark:border-white/[.2] dark:hover:bg-[#1a1a1a]"
-        >
-          Show them anyway
-        </button>
-      </div>
     );
   }
 
@@ -251,10 +250,10 @@ export default function ReviewQueue({
 
       <p className="text-xs text-zinc-500 dark:text-zinc-400">
         {confirmedCount} of {visible.length} saved to your vault
-        {skippedCount > 0 && (
+        {dismissedCount > 0 && (
           <>
             {" · "}
-            {skippedCount} skipped (no knife detected){" "}
+            {dismissedCount} skipped (no knife detected){" "}
             <button
               type="button"
               onClick={() => setShowSkipped((v) => !v)}
@@ -276,22 +275,43 @@ export default function ReviewQueue({
           </span>
         </div>
 
-        {(errors[current.id] || isUnprocessed(current)) && (
+        {(errors[current.id] || isUnprocessed(current) || current.status === "not_identified") && (
           <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
-            <p className="font-medium">Identification didn&apos;t finish for this knife.</p>
+            <p className="font-medium">
+              {current.status === "not_identified" && !errors[current.id]
+                ? "No knife was detected here."
+                : "Identification didn't finish for this knife."}
+            </p>
             {errors[current.id] && <p className="mt-1 text-xs">{errors[current.id]}</p>}
-            <button
-              type="button"
-              onClick={() => onRetryIdentify(current.id)}
-              disabled={retrying[current.id]}
-              className="mt-2 flex h-8 items-center justify-center rounded-full border border-solid border-amber-400 px-3 text-xs font-medium text-amber-900 transition-colors hover:bg-amber-100 disabled:opacity-50 dark:border-amber-700 dark:text-amber-200 dark:hover:bg-amber-900"
-            >
-              {retrying[current.id] ? "Retrying…" : "Retry identification"}
-            </button>
+            <p className="mt-1 text-xs">
+              If the photo was unclear, add a closer shot below, then retry.
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => onRetryIdentify(current.id)}
+                disabled={retrying[current.id]}
+                className="flex h-8 items-center justify-center rounded-full border border-solid border-amber-400 px-3 text-xs font-medium text-amber-900 transition-colors hover:bg-amber-100 disabled:opacity-50 dark:border-amber-700 dark:text-amber-200 dark:hover:bg-amber-900"
+              >
+                {retrying[current.id] ? "Retrying…" : "Retry identification"}
+              </button>
+              {current.status === "not_identified" && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDismissedSkips((prev) => ({ ...prev, [current.id]: true }));
+                    if (index < visible.length - 1) setIndex(index + 1);
+                  }}
+                  className="flex h-8 items-center justify-center rounded-full px-3 text-xs font-medium text-amber-900 underline transition-colors hover:bg-amber-100 dark:text-amber-200 dark:hover:bg-amber-900"
+                >
+                  Skip — no knife here
+                </button>
+              )}
+            </div>
           </div>
         )}
 
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           {thumbnails[current.id]?.front && (
             // eslint-disable-next-line @next/next/no-img-element -- private, signed-URL thumbnail
             <img
@@ -308,6 +328,24 @@ export default function ReviewQueue({
               className="h-28 w-24 rounded object-cover"
             />
           )}
+          {(extraPhotos[current.id] ?? []).map((photo) => (
+            // eslint-disable-next-line @next/next/no-img-element -- private, signed-URL thumbnail
+            <img
+              key={photo.id}
+              src={photo.url}
+              alt={`Slot ${current.slot_position} extra`}
+              className="h-28 w-24 rounded object-cover"
+            />
+          ))}
+          <AddPhotoButton
+            knifeId={current.id}
+            onUploaded={(photo) =>
+              setExtraPhotos((prev) => ({
+                ...prev,
+                [current.id]: [...(prev[current.id] ?? []), photo],
+              }))
+            }
+          />
         </div>
 
         <SpecField
