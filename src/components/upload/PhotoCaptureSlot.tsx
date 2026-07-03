@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import SlotGuideOverlay from "./SlotGuideOverlay";
+import { useCameraCapture } from "@/components/camera/useCameraCapture";
 
 type Props = {
   label: string;
@@ -11,12 +12,10 @@ type Props = {
 };
 
 export default function PhotoCaptureSlot({ label, file, onChange, mode = "batch" }: Props) {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { videoRef, cameraOpen, cameraError, openCamera, closeCamera, capturePhoto } =
+    useCameraCapture();
 
-  const [cameraOpen, setCameraOpen] = useState(false);
-  const [cameraError, setCameraError] = useState<string | null>(null);
   const previewUrl = useMemo(
     () => (file ? URL.createObjectURL(file) : null),
     [file],
@@ -28,72 +27,10 @@ export default function PhotoCaptureSlot({ label, file, onChange, mode = "batch"
     };
   }, [previewUrl]);
 
-  useEffect(() => {
-    return () => {
-      streamRef.current?.getTracks().forEach((track) => track.stop());
-    };
-  }, []);
-
-  // Attach the stream once the <video> element has actually mounted, rather
-  // than guessing with requestAnimationFrame — on slower devices the old
-  // approach could race the DOM commit and leave the viewfinder blank.
-  useEffect(() => {
-    if (cameraOpen && videoRef.current && streamRef.current) {
-      videoRef.current.srcObject = streamRef.current;
-    }
-  }, [cameraOpen]);
-
-  async function openCamera() {
-    setCameraError(null);
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: "environment",
-          // Without explicit constraints, browsers often default to a low
-          // resolution (observed ~480x640) — nowhere near what phone
-          // cameras can do, and far too soft for reading tang stamps once
-          // cropped into 5 slots. Ask for as much as the device offers;
-          // "ideal" degrades gracefully instead of failing on older devices.
-          width: { ideal: 3840 },
-          height: { ideal: 2160 },
-        },
-        audio: false,
-      });
-      streamRef.current = stream;
-      setCameraOpen(true);
-    } catch {
-      setCameraError('Camera unavailable — use "Choose from Library" instead.');
-    }
-  }
-
-  function closeCamera() {
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    streamRef.current = null;
-    setCameraOpen(false);
-  }
-
-  function capturePhoto() {
-    const video = videoRef.current;
-    if (!video) return;
-
-    const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-    canvas.toBlob(
-      (blob) => {
-        if (blob) {
-          const fileName = `${label.toLowerCase().replace(/\s+/g, "-")}.jpg`;
-          onChange(new File([blob], fileName, { type: "image/jpeg" }));
-        }
-        closeCamera();
-      },
-      "image/jpeg",
-      0.92,
-    );
+  async function handleCapture() {
+    const fileName = `${label.toLowerCase().replace(/\s+/g, "-")}.jpg`;
+    const captured = await capturePhoto(fileName);
+    if (captured) onChange(captured);
   }
 
   function handleFileInput(e: React.ChangeEvent<HTMLInputElement>) {
@@ -130,7 +67,7 @@ export default function PhotoCaptureSlot({ label, file, onChange, mode = "batch"
           <div className="absolute inset-x-0 bottom-3 flex justify-center gap-3">
             <button
               type="button"
-              onClick={capturePhoto}
+              onClick={handleCapture}
               className="rounded-full bg-white px-5 py-2 text-sm font-medium text-black"
             >
               Capture
