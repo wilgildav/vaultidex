@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import type { ConfidenceLevel, Knife } from "@/types/knife";
 
 type Thumbnails = Record<string, { front?: string; back?: string }>;
@@ -209,6 +210,46 @@ function YearRangeField({
 // finding nothing — the identification prompt always attempts to fill in
 // something when it thinks a knife is present. Without this, a failed
 // call is indistinguishable from a real accuracy miss.
+// The stopping point once every knife in the batch has either been
+// confirmed or left as an explicit "no knife detected" skip. Deliberately
+// plain — no animation or celebratory color — since this is a routine
+// checkpoint the user will hit at the end of every upload, not a rare win.
+function BatchComplete({
+  confirmedCount,
+  skippedCount,
+  totalCount,
+}: {
+  confirmedCount: number;
+  skippedCount: number;
+  totalCount: number;
+}) {
+  return (
+    <div className="flex flex-col items-center gap-4 rounded-lg border border-black/[.08] bg-white p-8 text-center dark:border-white/[.145] dark:bg-zinc-950">
+      <h2 className="text-lg font-semibold text-black dark:text-zinc-50">Batch reviewed</h2>
+      <p className="text-sm text-zinc-600 dark:text-zinc-400">
+        {confirmedCount} of {totalCount} knife{totalCount === 1 ? "" : "s"} saved to your vault
+        {skippedCount > 0 &&
+          ` · ${skippedCount} skipped (no knife detected)`}
+        .
+      </p>
+      <div className="flex flex-col gap-3 sm:flex-row">
+        <Link
+          href="/"
+          className="flex h-11 items-center justify-center rounded-full bg-foreground px-5 font-medium text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc]"
+        >
+          Back to Vault
+        </Link>
+        <Link
+          href="/upload"
+          className="flex h-11 items-center justify-center rounded-full border border-solid border-black/[.15] px-5 font-medium transition-colors hover:bg-black/[.04] dark:border-white/[.2] dark:hover:bg-[#1a1a1a]"
+        >
+          Upload another batch
+        </Link>
+      </div>
+    </div>
+  );
+}
+
 function isUnprocessed(knife: Knife): boolean {
   return (
     knife.status === "draft" &&
@@ -308,7 +349,18 @@ export default function ReviewQueue({
   }
 
   const confirmedCount = visible.filter((k) => k.status === "confirmed").length;
-  const allConfirmed = visible.length > 0 && confirmedCount === visible.length;
+  const confirmedTotal = sorted.filter((k) => k.status === "confirmed").length;
+  const allReviewed = sorted.length > 0 && confirmedTotal + skippedCount === sorted.length;
+
+  if (allReviewed) {
+    return (
+      <BatchComplete
+        confirmedCount={confirmedTotal}
+        skippedCount={skippedCount}
+        totalCount={sorted.length}
+      />
+    );
+  }
 
   if (visible.length === 0) {
     return (
@@ -556,12 +608,6 @@ export default function ReviewQueue({
               : "Save to Vault"}
         </button>
       </div>
-
-      {allConfirmed && (
-        <p className="text-center text-sm text-green-600 dark:text-green-500">
-          You&apos;ve reviewed every knife in this batch.
-        </p>
-      )}
     </div>
   );
 }
