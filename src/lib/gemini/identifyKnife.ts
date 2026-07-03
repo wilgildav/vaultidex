@@ -427,13 +427,17 @@ export async function identifyKnife(
     CONSISTENCY_SCHEMA,
   );
 
-  const adjusted: KnifeIdentification = { ...identification };
-  if (identification.maker_confidence === "medium") {
-    adjusted.maker_confidence = consistency.agree ? "high" : "low";
-  }
-  if (identification.model_confidence === "medium") {
-    adjusted.model_confidence = consistency.agree ? "high" : "low";
-  }
+  // The consistency check asks a single joint question — whether maker AND
+  // model agree across independent re-reads — so its verdict applies to
+  // both fields whenever it runs, not just whichever one was "medium" and
+  // triggered it. Otherwise a maker the model was already (over)confident
+  // about at "high" never gets corrected even when the re-reads disagree
+  // on that exact maker name.
+  const adjusted: KnifeIdentification = {
+    ...identification,
+    maker_confidence: consistency.agree ? "high" : "low",
+    model_confidence: consistency.agree ? "high" : "low",
+  };
   if (!consistency.agree) {
     const disagreementNote =
       `Self-consistency check disagreed on maker/model (${consistency.summary}). Differing readings:\n` +
