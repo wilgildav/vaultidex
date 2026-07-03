@@ -19,11 +19,10 @@ export default async function UploadPage() {
           Upload knives
         </h1>
         <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-          Take two photos of your knives laid out side by side — one from
-          the front, one from the back — using the numbered guides to line
-          them up. You can photograph anywhere from 1 to 5 knives at a
-          time; the guide shows 5 slots because that&apos;s the maximum,
-          not a requirement.
+          Take two photos — one from the front, one from the back — using
+          the on-screen guide to line things up. Choose single-knife mode
+          for one knife at a time, or batch mode for up to 5 laid out side
+          by side.
         </p>
         <div className="mt-8">
           <UploadBatchForm userId={user.id} />

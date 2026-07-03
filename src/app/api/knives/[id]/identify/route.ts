@@ -34,7 +34,7 @@ export async function POST(
 
   const { data: batch, error: batchError } = await supabase
     .from("upload_batches")
-    .select("front_image_path, back_image_path")
+    .select("front_image_path, back_image_path, slot_count")
     .eq("id", knife.upload_batch_id)
     .single();
 
@@ -62,6 +62,7 @@ export async function POST(
       Buffer.from(await frontDownload.data.arrayBuffer()),
       Buffer.from(await backDownload.data.arrayBuffer()),
       knife.slot_position,
+      batch.slot_count,
     );
 
     if (!result.knifePresent) {

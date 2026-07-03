@@ -4,9 +4,12 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { createSlotKnives } from "@/lib/upload/createSlotKnives";
+import { createSingleKnife } from "@/lib/upload/createSingleKnife";
 import type { Knife } from "@/types/knife";
 import BatchReview from "./BatchReview";
 import PhotoCaptureSlot from "./PhotoCaptureSlot";
+
+type Mode = "batch" | "single";
 
 function extensionForType(type: string): string {
   if (type === "image/png") return "png";
@@ -18,6 +21,7 @@ export default function UploadBatchForm({ userId }: { userId: string }) {
   const router = useRouter();
   const supabase = createClient();
 
+  const [mode, setMode] = useState<Mode>("batch");
   const [frontFile, setFrontFile] = useState<File | null>(null);
   const [backFile, setBackFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -26,6 +30,17 @@ export default function UploadBatchForm({ userId }: { userId: string }) {
   const [createdKnives, setCreatedKnives] = useState<Knife[] | null>(null);
 
   const canSubmit = !!frontFile && !!backFile && !submitting;
+
+  // Switching modes changes what the guide expects the photo to look like
+  // (one centered knife vs. up to 5 laid out side by side), so a photo
+  // already captured under the old mode wouldn't match the new guide —
+  // clearing it prompts a recapture instead of silently uploading a
+  // mismatched photo.
+  function handleModeChange(next: Mode) {
+    setMode(next);
+    setFrontFile(null);
+    setBackFile(null);
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -37,7 +52,7 @@ export default function UploadBatchForm({ userId }: { userId: string }) {
 
     const { data: batch, error: batchError } = await supabase
       .from("upload_batches")
-      .insert({})
+      .insert({ slot_count: mode === "single" ? 1 : 5 })
       .select()
       .single();
 
@@ -82,13 +97,10 @@ export default function UploadBatchForm({ userId }: { userId: string }) {
     }
 
     try {
-      const knives = await createSlotKnives({
-        supabase,
-        userId,
-        batchId: batch.id,
-        frontFile,
-        backFile,
-      });
+      const knives =
+        mode === "single"
+          ? await createSingleKnife({ supabase, userId, batchId: batch.id, frontFile, backFile })
+          : await createSlotKnives({ supabase, userId, batchId: batch.id, frontFile, backFile });
       setCreatedKnives(knives);
     } catch (slotError) {
       setError(
@@ -101,7 +113,9 @@ export default function UploadBatchForm({ userId }: { userId: string }) {
     }
 
     setSuccess(
-      "Batch uploaded — 5 draft knife entries created. Feel free to start another batch below.",
+      mode === "single"
+        ? "Knife uploaded — 1 draft entry created. Feel free to upload another below."
+        : "Batch uploaded — 5 draft knife entries created. Feel free to start another batch below.",
     );
     setFrontFile(null);
     setBackFile(null);
@@ -111,16 +125,42 @@ export default function UploadBatchForm({ userId }: { userId: string }) {
 
   return (
     <>
-      <form onSubmit={handleSubmit} className="flex flex-col gap-8">
+      <div className="flex flex-col gap-1">
+        <div className="inline-flex w-fit rounded-full border border-black/[.08] p-0.5 dark:border-white/[.145]">
+          {(["single", "batch"] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => handleModeChange(m)}
+              className={`rounded-full px-3 py-1 text-sm font-medium transition-colors ${
+                mode === m
+                  ? "bg-foreground text-background"
+                  : "text-zinc-600 hover:bg-black/[.04] dark:text-zinc-400 dark:hover:bg-[#1a1a1a]"
+              }`}
+            >
+              {m === "single" ? "Single knife" : "Batch (up to 5)"}
+            </button>
+          ))}
+        </div>
+        <p className="text-xs text-zinc-500 dark:text-zinc-400">
+          {mode === "single"
+            ? "One knife per upload, centered in the frame guide."
+            : "Up to 5 knives laid out side by side, aligned to the numbered guides."}
+        </p>
+      </div>
+
+      <form onSubmit={handleSubmit} className="mt-6 flex flex-col gap-8">
         <PhotoCaptureSlot
-          label="Front of your knives"
+          label={mode === "single" ? "Front of your knife" : "Front of your knives"}
           file={frontFile}
           onChange={setFrontFile}
+          mode={mode}
         />
         <PhotoCaptureSlot
-          label="Back of your knives"
+          label={mode === "single" ? "Back of your knife" : "Back of your knives"}
           file={backFile}
           onChange={setBackFile}
+          mode={mode}
         />
 
         {error && <p className="text-sm text-red-600">{error}</p>}
@@ -135,7 +175,7 @@ export default function UploadBatchForm({ userId }: { userId: string }) {
           disabled={!canSubmit}
           className="flex h-12 w-full items-center justify-center rounded-full bg-foreground px-5 font-medium text-background transition-colors hover:bg-[#383838] disabled:opacity-50 dark:hover:bg-[#ccc]"
         >
-          {submitting ? "Uploading…" : "Submit batch"}
+          {submitting ? "Uploading…" : mode === "single" ? "Submit knife" : "Submit batch"}
         </button>
       </form>
 

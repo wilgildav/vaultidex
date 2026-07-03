@@ -1,5 +1,4 @@
 import sharp, { type Sharp } from "sharp";
-import { SLOT_COUNT } from "@/lib/upload/constants";
 
 export type ImageInput = { buffer: Buffer; mimeType: string };
 
@@ -33,8 +32,8 @@ export async function prepareImage(buffer: Buffer): Promise<PreparedImage> {
   return { image, width, height };
 }
 
-function slotBounds(prepared: PreparedImage, slotPosition: number): Region {
-  const slotWidthExact = prepared.width / SLOT_COUNT;
+function slotBounds(prepared: PreparedImage, slotPosition: number, slotCount: number): Region {
+  const slotWidthExact = prepared.width / slotCount;
   const left = clamp(Math.round((slotPosition - 1) * slotWidthExact), 0, prepared.width - 1);
   const width = clamp(Math.round(slotWidthExact), 1, prepared.width - left);
   return { left, top: 0, width, height: prepared.height };
@@ -42,12 +41,16 @@ function slotBounds(prepared: PreparedImage, slotPosition: number): Region {
 
 // The whole-knife view for one slot, sourced from the original
 // full-resolution batch photo rather than the already-cropped,
-// already-recompressed per-slot image saved at upload time.
+// already-recompressed per-slot image saved at upload time. slotCount is
+// the batch's actual slot count (1 for single-knife mode, up to 5 for a
+// flat-lay batch) — not always 5, so a single-knife photo isn't sliced
+// down to its leftmost fifth.
 export async function extractSlotFullCrop(
   prepared: PreparedImage,
   slotPosition: number,
+  slotCount: number,
 ): Promise<ImageInput> {
-  return extractJpeg(prepared.image, slotBounds(prepared, slotPosition));
+  return extractJpeg(prepared.image, slotBounds(prepared, slotPosition, slotCount));
 }
 
 // A tight, upscaled crop around a specific point Gemini reported seeing a
@@ -59,8 +62,9 @@ export async function extractMarkCrop(
   prepared: PreparedImage,
   slotPosition: number,
   mark: MarkLocation,
+  slotCount: number,
 ): Promise<ImageInput> {
-  const slot = slotBounds(prepared, slotPosition);
+  const slot = slotBounds(prepared, slotPosition, slotCount);
   const cropWidth = clamp(Math.round(slot.width * 0.7), 1, slot.width);
   const cropHeight = clamp(Math.round(prepared.height * 0.15), 1, prepared.height);
 

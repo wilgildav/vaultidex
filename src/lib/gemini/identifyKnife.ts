@@ -353,6 +353,7 @@ export async function identifyKnife(
   frontBuffer: Buffer,
   backBuffer: Buffer,
   slotPosition: number,
+  slotCount: number,
 ): Promise<IdentifyKnifeResult> {
   const ai = getGeminiClient();
 
@@ -361,8 +362,8 @@ export async function identifyKnife(
     prepareImage(backBuffer),
   ]);
   const [frontFull, backFull] = await Promise.all([
-    extractSlotFullCrop(frontPrepared, slotPosition),
-    extractSlotFullCrop(backPrepared, slotPosition),
+    extractSlotFullCrop(frontPrepared, slotPosition, slotCount),
+    extractSlotFullCrop(backPrepared, slotPosition, slotCount),
   ]);
 
   const [presence, located] = await Promise.all([
@@ -384,10 +385,14 @@ export async function identifyKnife(
 
   const [frontMarkCrops, backMarkCrops] = await Promise.all([
     Promise.all(
-      located.front_marks.map((mark) => extractMarkCrop(frontPrepared, slotPosition, mark)),
+      located.front_marks.map((mark) =>
+        extractMarkCrop(frontPrepared, slotPosition, mark, slotCount),
+      ),
     ),
     Promise.all(
-      located.back_marks.map((mark) => extractMarkCrop(backPrepared, slotPosition, mark)),
+      located.back_marks.map((mark) =>
+        extractMarkCrop(backPrepared, slotPosition, mark, slotCount),
+      ),
     ),
   ]);
 

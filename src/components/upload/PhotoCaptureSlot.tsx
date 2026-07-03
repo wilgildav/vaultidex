@@ -7,9 +7,10 @@ type Props = {
   label: string;
   file: File | null;
   onChange: (file: File | null) => void;
+  mode?: "batch" | "single";
 };
 
-export default function PhotoCaptureSlot({ label, file, onChange }: Props) {
+export default function PhotoCaptureSlot({ label, file, onChange, mode = "batch" }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -107,8 +108,9 @@ export default function PhotoCaptureSlot({ label, file, onChange }: Props) {
           {label}
         </h3>
         <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          Line up your knives against the numbered guides. Fewer than 5 is
-          completely fine — the guide just shows the maximum.
+          {mode === "single"
+            ? "Center your knife within the frame guide."
+            : "Line up your knives against the numbered guides. Fewer than 5 is completely fine — the guide just shows the maximum."}
         </p>
       </div>
 
@@ -121,7 +123,10 @@ export default function PhotoCaptureSlot({ label, file, onChange }: Props) {
             muted
             className="h-full w-full object-cover"
           />
-          <SlotGuideOverlay tip="Hold your phone level and at a consistent height" />
+          <SlotGuideOverlay
+            tip="Hold your phone level and at a consistent height"
+            mode={mode}
+          />
           <div className="absolute inset-x-0 bottom-3 flex justify-center gap-3">
             <button
               type="button"
@@ -147,7 +152,7 @@ export default function PhotoCaptureSlot({ label, file, onChange }: Props) {
             alt={`${label} preview`}
             className="h-full w-full object-cover"
           />
-          <SlotGuideOverlay />
+          <SlotGuideOverlay mode={mode} />
           <button
             type="button"
             onClick={() => onChange(null)}
