@@ -41,6 +41,7 @@ export type Knife = {
   ai_notes: string | null;
   status: "draft" | "confirmed" | "not_identified";
   visibility: "private" | "public";
+  favorite: boolean;
   front_image_path: string | null;
   back_image_path: string | null;
   created_at: string;

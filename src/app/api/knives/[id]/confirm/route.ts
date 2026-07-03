@@ -45,22 +45,30 @@ export async function POST(
 
   const visibility = body.visibility === "public" ? "public" : "private";
 
+  const updates: Record<string, unknown> = {
+    maker: asNullableString(body.maker),
+    model: asNullableString(body.model),
+    model_number: asNullableString(body.model_number),
+    blade_steel: asNullableString(body.blade_steel),
+    handle_material: asNullableString(body.handle_material),
+    year_start: asNullableInt(body.year_start),
+    year_end: asNullableInt(body.year_end),
+    blade_length_in: asNullableNumber(body.blade_length_in),
+    overall_length_open_in: asNullableNumber(body.overall_length_open_in),
+    notes: asNullableString(body.notes),
+    visibility,
+    status: "confirmed",
+  };
+  // Only the knife detail page sends this — the review queue doesn't have a
+  // favorite toggle, so omitting the key here (rather than defaulting it to
+  // false) keeps a review-queue save from silently un-favoriting a knife.
+  if (typeof body.favorite === "boolean") {
+    updates.favorite = body.favorite;
+  }
+
   const { data: updated, error } = await supabase
     .from("knives")
-    .update({
-      maker: asNullableString(body.maker),
-      model: asNullableString(body.model),
-      model_number: asNullableString(body.model_number),
-      blade_steel: asNullableString(body.blade_steel),
-      handle_material: asNullableString(body.handle_material),
-      year_start: asNullableInt(body.year_start),
-      year_end: asNullableInt(body.year_end),
-      blade_length_in: asNullableNumber(body.blade_length_in),
-      overall_length_open_in: asNullableNumber(body.overall_length_open_in),
-      notes: asNullableString(body.notes),
-      visibility,
-      status: "confirmed",
-    })
+    .update(updates)
     .eq("id", id)
     .select()
     .single();

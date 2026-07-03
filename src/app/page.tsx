@@ -22,6 +22,12 @@ export default async function Home() {
             </p>
             <div className="flex items-center gap-3">
               <Link
+                href="/collection"
+                className="flex h-10 items-center justify-center rounded-full border border-solid border-black/[.15] px-5 text-sm font-medium transition-colors hover:bg-black/[.04] dark:border-white/[.2] dark:hover:bg-[#1a1a1a]"
+              >
+                My Vault
+              </Link>
+              <Link
                 href="/upload"
                 className="flex h-10 items-center justify-center rounded-full bg-foreground px-5 text-sm font-medium text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc]"
               >
