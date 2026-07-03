@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type, createUserContent, type Schema } from "@google/genai";
-import { getGeminiClient } from "./client";
+import { getGeminiClient, withGeminiRetry } from "./client";
 
 const MODEL = "gemini-2.5-flash";
 
@@ -50,11 +50,13 @@ const EXTRACTION_SCHEMA: Schema = {
 };
 
 async function generateJson<T>(ai: GoogleGenAI, parts: string[], schema: Schema): Promise<T> {
-  const response = await ai.models.generateContent({
-    model: MODEL,
-    contents: createUserContent(parts),
-    config: { responseMimeType: "application/json", responseSchema: schema },
-  });
+  const response = await withGeminiRetry(() =>
+    ai.models.generateContent({
+      model: MODEL,
+      contents: createUserContent(parts),
+      config: { responseMimeType: "application/json", responseSchema: schema },
+    }),
+  );
   const text = response.text;
   if (!text) {
     throw new Error("Gemini returned an empty response.");
@@ -72,31 +74,29 @@ async function generateJson<T>(ai: GoogleGenAI, parts: string[], schema: Schema)
 // web search and synthesis, not just token generation — so it runs as a
 // separate follow-up after the base identification is already shown,
 // rather than making the user wait for it before seeing anything.
-export async function verifySpecs(
-  maker: string,
-  model: string,
-  pattern: string | null,
-): Promise<VerifiedSpecs> {
+export async function verifySpecs(maker: string, model: string): Promise<VerifiedSpecs> {
   const ai = getGeminiClient();
-  const subject = `maker "${maker}", model "${model}"${pattern ? `, pattern "${pattern}"` : ""}`;
+  const subject = `maker "${maker}", model "${model}"`;
 
-  const searchResponse = await ai.models.generateContent({
-    model: MODEL,
-    contents: createUserContent([
-      `Search for the official or widely-cited specifications of this knife: ${subject}. ` +
-        "Report the blade length (inches), overall open length when opened (inches), and " +
-        "blade steel type, based on real sources such as the manufacturer's website, retailer " +
-        "listings, or established knife-enthusiast references. Prefer the manufacturer's own " +
-        "listed figures if you find them. Sources routinely differ slightly by measurement " +
-        "convention (e.g. cutting edge vs. full blade length, or rounded metric conversions) — " +
-        "that's normal, not a failure; state your best single number for each spec and mention " +
-        "the range if it's notable. Only say you can't find reliable specs if you genuinely find " +
-        "no information tying real numbers to this specific model.",
-    ]),
-    config: {
-      tools: [{ googleSearch: {} }],
-    },
-  });
+  const searchResponse = await withGeminiRetry(() =>
+    ai.models.generateContent({
+      model: MODEL,
+      contents: createUserContent([
+        `Search for the official or widely-cited specifications of this knife: ${subject}. ` +
+          "Report the blade length (inches), overall open length when opened (inches), and " +
+          "blade steel type, based on real sources such as the manufacturer's website, retailer " +
+          "listings, or established knife-enthusiast references. Prefer the manufacturer's own " +
+          "listed figures if you find them. Sources routinely differ slightly by measurement " +
+          "convention (e.g. cutting edge vs. full blade length, or rounded metric conversions) — " +
+          "that's normal, not a failure; state your best single number for each spec and mention " +
+          "the range if it's notable. Only say you can't find reliable specs if you genuinely find " +
+          "no information tying real numbers to this specific model.",
+      ]),
+      config: {
+        tools: [{ googleSearch: {} }],
+      },
+    }),
+  );
 
   const searchText = searchResponse.text ?? "";
   const groundingChunks = searchResponse.candidates?.[0]?.groundingMetadata?.groundingChunks ?? [];

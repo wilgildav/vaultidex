@@ -8,9 +8,10 @@ type Thumbnails = Record<string, { front?: string; back?: string }>;
 type EditableFields = {
   maker: string;
   model: string;
-  pattern: string;
   blade_steel: string;
   handle_material: string;
+  year_start: string;
+  year_end: string;
   blade_length_in: string;
   overall_length_open_in: string;
   notes: string;
@@ -21,9 +22,10 @@ function fieldsFromKnife(knife: Knife): EditableFields {
   return {
     maker: knife.maker ?? "",
     model: knife.model ?? "",
-    pattern: knife.pattern ?? "",
     blade_steel: knife.blade_steel ?? "",
     handle_material: knife.handle_material ?? "",
+    year_start: knife.year_start != null ? String(knife.year_start) : "",
+    year_end: knife.year_end != null ? String(knife.year_end) : "",
     blade_length_in: knife.blade_length_in != null ? String(knife.blade_length_in) : "",
     overall_length_open_in:
       knife.overall_length_open_in != null ? String(knife.overall_length_open_in) : "",
@@ -139,6 +141,66 @@ function SpecField({
   );
 }
 
+// Production year range: two inputs (start/end) sharing one confidence
+// badge, since the AI estimates them together as a single range rather
+// than as two independent guesses.
+function YearRangeField({
+  startValue,
+  endValue,
+  onStartChange,
+  onEndChange,
+  confidence,
+  aiOriginalStart,
+  aiOriginalEnd,
+}: {
+  startValue: string;
+  endValue: string;
+  onStartChange: (v: string) => void;
+  onEndChange: (v: string) => void;
+  confidence?: ConfidenceLevel;
+  aiOriginalStart?: number | null;
+  aiOriginalEnd?: number | null;
+}) {
+  const aiStartStr = aiOriginalStart != null ? String(aiOriginalStart) : null;
+  const aiEndStr = aiOriginalEnd != null ? String(aiOriginalEnd) : null;
+  const showAiHint =
+    (aiStartStr != null && aiStartStr !== startValue.trim()) ||
+    (aiEndStr != null && aiEndStr !== endValue.trim());
+
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center justify-between gap-2">
+        <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+          Production year(s)
+        </label>
+        <ConfidenceBadge level={confidence ?? null} />
+      </div>
+      <div className="flex items-center gap-2">
+        <input
+          type="number"
+          placeholder="Start"
+          value={startValue}
+          onChange={(e) => onStartChange(e.target.value)}
+          className={`flex-1 ${inputClasses}`}
+        />
+        <span className="text-sm text-zinc-500 dark:text-zinc-400">to</span>
+        <input
+          type="number"
+          placeholder="End"
+          value={endValue}
+          onChange={(e) => onEndChange(e.target.value)}
+          className={`flex-1 ${inputClasses}`}
+        />
+      </div>
+      {showAiHint && (
+        <p className="text-xs text-zinc-500 dark:text-zinc-400">
+          AI originally said: {aiStartStr ?? "?"}–{aiEndStr ?? "?"}
+        </p>
+      )}
+    </div>
+  );
+}
+
 // A "draft" knife with every field still null almost always means
 // identify() never actually finished for it (a transient API error, most
 // commonly Gemini returning 503 under load) rather than the AI genuinely
@@ -150,9 +212,10 @@ function isUnprocessed(knife: Knife): boolean {
     knife.status === "draft" &&
     knife.maker == null &&
     knife.model == null &&
-    knife.pattern == null &&
     knife.blade_steel == null &&
     knife.handle_material == null &&
+    knife.year_start == null &&
+    knife.year_end == null &&
     knife.blade_length_in == null &&
     knife.overall_length_open_in == null &&
     knife.notes == null
@@ -217,9 +280,10 @@ export default function ReviewQueue({
       body: JSON.stringify({
         maker: currentFields.maker,
         model: currentFields.model,
-        pattern: currentFields.pattern,
         blade_steel: currentFields.blade_steel,
         handle_material: currentFields.handle_material,
+        year_start: currentFields.year_start,
+        year_end: currentFields.year_end,
         blade_length_in: currentFields.blade_length_in,
         overall_length_open_in: currentFields.overall_length_open_in,
         notes: currentFields.notes,
@@ -371,12 +435,6 @@ export default function ReviewQueue({
           aiOriginal={current.ai_model}
         />
         <SpecField
-          label="Pattern"
-          value={currentFields.pattern}
-          onChange={(v) => setField("pattern", v)}
-          aiOriginal={current.ai_pattern}
-        />
-        <SpecField
           label="Blade steel"
           value={currentFields.blade_steel}
           onChange={(v) => setField("blade_steel", v)}
@@ -390,6 +448,15 @@ export default function ReviewQueue({
           onChange={(v) => setField("handle_material", v)}
           confidence={current.handle_material_confidence}
           aiOriginal={current.ai_handle_material}
+        />
+        <YearRangeField
+          startValue={currentFields.year_start}
+          endValue={currentFields.year_end}
+          onStartChange={(v) => setField("year_start", v)}
+          onEndChange={(v) => setField("year_end", v)}
+          confidence={current.year_confidence}
+          aiOriginalStart={current.ai_year_start}
+          aiOriginalEnd={current.ai_year_end}
         />
         <SpecField
           label="Blade length"

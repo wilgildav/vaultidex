@@ -6,7 +6,7 @@ import {
   createUserContent,
   type Schema,
 } from "@google/genai";
-import { getGeminiClient } from "./client";
+import { getGeminiClient, withGeminiRetry } from "./client";
 import {
   prepareImage,
   extractSlotFullCrop,
@@ -127,21 +127,23 @@ const IDENTIFICATION_SCHEMA: Schema = {
       description: "Model name, or null if unknown.",
     },
     model_confidence: { ...CONFIDENCE_SCHEMA, nullable: true },
-    pattern: {
-      type: Type.STRING,
-      nullable: true,
-      description:
-        "Blade/handle pattern name (e.g. 'Trapper', 'Stockman'), or null if unknown.",
-    },
     blade_steel: { type: Type.STRING, nullable: true },
     blade_steel_confidence: { ...CONFIDENCE_SCHEMA, nullable: true },
     handle_material: { type: Type.STRING, nullable: true },
     handle_material_confidence: { ...CONFIDENCE_SCHEMA, nullable: true },
-    era: {
-      type: Type.STRING,
+    year_start: {
+      type: Type.INTEGER,
       nullable: true,
-      description: "Estimated production era or year range, or null if unknown.",
+      description:
+        "Estimated earliest possible production year, or null if unknown.",
     },
+    year_end: {
+      type: Type.INTEGER,
+      nullable: true,
+      description:
+        "Estimated latest possible production year — the same value as year_start if a single year is the best estimate, or null if unknown.",
+    },
+    year_confidence: { ...CONFIDENCE_SCHEMA, nullable: true },
     blade_length_in: {
       type: Type.NUMBER,
       nullable: true,
@@ -164,12 +166,13 @@ const IDENTIFICATION_SCHEMA: Schema = {
     "maker_confidence",
     "model",
     "model_confidence",
-    "pattern",
     "blade_steel",
     "blade_steel_confidence",
     "handle_material",
     "handle_material_confidence",
-    "era",
+    "year_start",
+    "year_end",
+    "year_confidence",
     "blade_length_in",
     "overall_length_open_in",
     "notes",
@@ -199,12 +202,13 @@ export type KnifeIdentification = {
   maker_confidence: ConfidenceLevel;
   model: string | null;
   model_confidence: ConfidenceLevel;
-  pattern: string | null;
   blade_steel: string | null;
   blade_steel_confidence: ConfidenceLevel;
   handle_material: string | null;
   handle_material_confidence: ConfidenceLevel;
-  era: string | null;
+  year_start: number | null;
+  year_end: number | null;
+  year_confidence: ConfidenceLevel;
   blade_length_in: number | null;
   overall_length_open_in: number | null;
   notes: string | null;
@@ -232,14 +236,16 @@ async function generateJson<T>(
   parts: (string | ReturnType<typeof imagePart>)[],
   schema: Schema,
 ): Promise<T> {
-  const response = await ai.models.generateContent({
-    model: MODEL,
-    contents: createUserContent(parts),
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: schema,
-    },
-  });
+  const response = await withGeminiRetry(() =>
+    ai.models.generateContent({
+      model: MODEL,
+      contents: createUserContent(parts),
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: schema,
+      },
+    }),
+  );
 
   const text = response.text;
   if (!text) {
@@ -388,7 +394,7 @@ export async function identifyKnife(
       "This is the front and back photo of a single pocketknife, along with a literal transcription of the text/marks visible on it.",
       ...imageParts(frontFull, backFull),
       `Transcription of visible marks:\n${transcription}`,
-      "Using both the images and the transcription, identify this knife. For maker, model, blade_steel, and handle_material, also give a confidence level (high/medium/low) for how sure you are. Estimate blade_length_in and overall_length_open_in in inches by comparing the knife's proportions to typical pocketknife dimensions. Use null for anything you cannot determine — do not guess just to fill a field.",
+      "Using both the images and the transcription, identify this knife. For maker, model, blade_steel, and handle_material, also give a confidence level (high/medium/low) for how sure you are. Estimate blade_length_in and overall_length_open_in in inches by comparing the knife's proportions to typical pocketknife dimensions. Estimate year_start and year_end (the earliest and latest years this knife was likely produced) by reasoning about the maker/model, construction style, materials, and any markings — use the same value for both if a single year is the best estimate, and give a year_confidence for that estimate. Use null for anything you cannot determine — do not guess just to fill a field.",
     ],
     IDENTIFICATION_SCHEMA,
   );

@@ -22,7 +22,7 @@ export async function POST(
 
   const { data: knife, error: fetchError } = await supabase
     .from("knives")
-    .select("maker, model, pattern, maker_confidence, model_confidence")
+    .select("maker, model, maker_confidence, model_confidence")
     .eq("id", id)
     .single();
 
@@ -40,7 +40,7 @@ export async function POST(
   }
 
   try {
-    const verified = await verifySpecs(knife.maker, knife.model, knife.pattern);
+    const verified = await verifySpecs(knife.maker, knife.model);
 
     const { data: updated, error: updateError } = await supabase
       .from("knives")

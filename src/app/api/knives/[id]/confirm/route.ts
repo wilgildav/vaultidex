@@ -37,6 +37,12 @@ export async function POST(
     return Number.isFinite(n) && n > 0 ? n : null;
   };
 
+  const asNullableInt = (value: unknown): number | null => {
+    if (value === null || value === undefined || value === "") return null;
+    const n = Number(value);
+    return Number.isFinite(n) ? Math.round(n) : null;
+  };
+
   const visibility = body.visibility === "public" ? "public" : "private";
 
   const { data: updated, error } = await supabase
@@ -44,9 +50,10 @@ export async function POST(
     .update({
       maker: asNullableString(body.maker),
       model: asNullableString(body.model),
-      pattern: asNullableString(body.pattern),
       blade_steel: asNullableString(body.blade_steel),
       handle_material: asNullableString(body.handle_material),
+      year_start: asNullableInt(body.year_start),
+      year_end: asNullableInt(body.year_end),
       blade_length_in: asNullableNumber(body.blade_length_in),
       overall_length_open_in: asNullableNumber(body.overall_length_open_in),
       notes: asNullableString(body.notes),
