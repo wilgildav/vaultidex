@@ -127,6 +127,13 @@ const IDENTIFICATION_SCHEMA: Schema = {
       description: "Model name, or null if unknown.",
     },
     model_confidence: { ...CONFIDENCE_SCHEMA, nullable: true },
+    model_number: {
+      type: Type.STRING,
+      nullable: true,
+      description:
+        "Manufacturer's model/pattern number as stamped or printed (e.g. '6318', 'M6'), distinct from the descriptive model name, or null if unknown.",
+    },
+    model_number_confidence: { ...CONFIDENCE_SCHEMA, nullable: true },
     blade_steel: { type: Type.STRING, nullable: true },
     blade_steel_confidence: { ...CONFIDENCE_SCHEMA, nullable: true },
     handle_material: { type: Type.STRING, nullable: true },
@@ -166,6 +173,8 @@ const IDENTIFICATION_SCHEMA: Schema = {
     "maker_confidence",
     "model",
     "model_confidence",
+    "model_number",
+    "model_number_confidence",
     "blade_steel",
     "blade_steel_confidence",
     "handle_material",
@@ -202,6 +211,8 @@ export type KnifeIdentification = {
   maker_confidence: ConfidenceLevel;
   model: string | null;
   model_confidence: ConfidenceLevel;
+  model_number: string | null;
+  model_number_confidence: ConfidenceLevel;
   blade_steel: string | null;
   blade_steel_confidence: ConfidenceLevel;
   handle_material: string | null;
@@ -394,7 +405,7 @@ export async function identifyKnife(
       "This is the front and back photo of a single pocketknife, along with a literal transcription of the text/marks visible on it.",
       ...imageParts(frontFull, backFull),
       `Transcription of visible marks:\n${transcription}`,
-      "Using both the images and the transcription, identify this knife. For maker, model, blade_steel, and handle_material, also give a confidence level (high/medium/low) for how sure you are. Estimate blade_length_in and overall_length_open_in in inches by comparing the knife's proportions to typical pocketknife dimensions. Estimate year_start and year_end (the earliest and latest years this knife was likely produced) by reasoning about the maker/model, construction style, materials, and any markings — use the same value for both if a single year is the best estimate, and give a year_confidence for that estimate. Use null for anything you cannot determine — do not guess just to fill a field.",
+      "Using both the images and the transcription, identify this knife. Model_number is the manufacturer's stamped/printed model or pattern number (e.g. '6318'), distinct from the descriptive model name — leave it null if no such number is visible, don't infer one from the model name. For maker, model, model_number, blade_steel, and handle_material, also give a confidence level (high/medium/low) for how sure you are. Estimate blade_length_in and overall_length_open_in in inches by comparing the knife's proportions to typical pocketknife dimensions. Estimate year_start and year_end (the earliest and latest years this knife was likely produced) by reasoning about the maker/model, construction style, materials, and any markings — use the same value for both if a single year is the best estimate, and give a year_confidence for that estimate. Use null for anything you cannot determine — do not guess just to fill a field.",
     ],
     IDENTIFICATION_SCHEMA,
   );

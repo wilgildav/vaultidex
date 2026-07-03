@@ -11,6 +11,8 @@ export type Knife = {
   maker_confidence: ConfidenceLevel;
   model: string | null;
   model_confidence: ConfidenceLevel;
+  model_number: string | null;
+  model_number_confidence: ConfidenceLevel;
   blade_steel: string | null;
   blade_steel_confidence: ConfidenceLevel;
   handle_material: string | null;
@@ -29,6 +31,7 @@ export type Knife = {
   notes: string | null;
   ai_maker: string | null;
   ai_model: string | null;
+  ai_model_number: string | null;
   ai_blade_steel: string | null;
   ai_handle_material: string | null;
   ai_year_start: number | null;

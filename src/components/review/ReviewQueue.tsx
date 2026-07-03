@@ -8,6 +8,7 @@ type Thumbnails = Record<string, { front?: string; back?: string }>;
 type EditableFields = {
   maker: string;
   model: string;
+  model_number: string;
   blade_steel: string;
   handle_material: string;
   year_start: string;
@@ -22,6 +23,7 @@ function fieldsFromKnife(knife: Knife): EditableFields {
   return {
     maker: knife.maker ?? "",
     model: knife.model ?? "",
+    model_number: knife.model_number ?? "",
     blade_steel: knife.blade_steel ?? "",
     handle_material: knife.handle_material ?? "",
     year_start: knife.year_start != null ? String(knife.year_start) : "",
@@ -212,6 +214,7 @@ function isUnprocessed(knife: Knife): boolean {
     knife.status === "draft" &&
     knife.maker == null &&
     knife.model == null &&
+    knife.model_number == null &&
     knife.blade_steel == null &&
     knife.handle_material == null &&
     knife.year_start == null &&
@@ -280,6 +283,7 @@ export default function ReviewQueue({
       body: JSON.stringify({
         maker: currentFields.maker,
         model: currentFields.model,
+        model_number: currentFields.model_number,
         blade_steel: currentFields.blade_steel,
         handle_material: currentFields.handle_material,
         year_start: currentFields.year_start,
@@ -433,6 +437,13 @@ export default function ReviewQueue({
           onChange={(v) => setField("model", v)}
           confidence={current.model_confidence}
           aiOriginal={current.ai_model}
+        />
+        <SpecField
+          label="Model number"
+          value={currentFields.model_number}
+          onChange={(v) => setField("model_number", v)}
+          confidence={current.model_number_confidence}
+          aiOriginal={current.ai_model_number}
         />
         <SpecField
           label="Blade steel"

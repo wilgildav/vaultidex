@@ -50,6 +50,7 @@ export async function POST(
     .update({
       maker: asNullableString(body.maker),
       model: asNullableString(body.model),
+      model_number: asNullableString(body.model_number),
       blade_steel: asNullableString(body.blade_steel),
       handle_material: asNullableString(body.handle_material),
       year_start: asNullableInt(body.year_start),
