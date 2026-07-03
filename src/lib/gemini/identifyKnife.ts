@@ -55,7 +55,7 @@ const PRESENCE_SCHEMA: Schema = {
     knife_present: {
       type: Type.BOOLEAN,
       description:
-        "True only if a single physical pocketknife or fixed-blade knife is clearly visible and identifiable in this slot.",
+        "True only if a single physical knife of any kind — folding, fixed-blade, multi-tool, or otherwise — is clearly visible and identifiable in this slot.",
     },
     reason: {
       type: Type.STRING,
@@ -273,12 +273,29 @@ async function generateJson<T>(
   return JSON.parse(text) as T;
 }
 
-const PRESENCE_PROMPT =
-  "You are looking at one slot from a flat-lay photo of up to five pocketknives, laid out " +
-  "side by side and photographed from directly above. This is a single cropped vertical slice " +
-  "from that photo, showing the front and back of whatever is in this slot. Is a single " +
-  "physical knife clearly present and visible in this slot? Answer false for an " +
-  "empty/background slot, a non-knife object, or an image too unclear to tell.";
+// Describes the actual photo geometry (a batch flat-lay with multiple
+// slots vs. a single centered shot) rather than always assuming a batch of
+// pocketknives — a hardcoded "up to five pocketknives" description was
+// both inaccurate for single-knife uploads and nudged the model toward
+// expecting a folding knife regardless of what's actually in the photo.
+function presencePrompt(slotCount: number): string {
+  if (slotCount > 1) {
+    return (
+      `You are looking at one slot from a flat-lay photo of up to ${slotCount} knives, laid out ` +
+      "side by side and photographed from directly above. This is a single cropped vertical " +
+      "slice from that photo, showing the front and back of whatever is in this slot. Is a " +
+      "single physical knife of any kind — folding, fixed-blade, multi-tool, or otherwise — " +
+      "clearly present and visible in this slot? Answer false for an empty/background slot, a " +
+      "non-knife object, or an image too unclear to tell."
+    );
+  }
+  return (
+    "You are looking at a flat-lay photo of a single knife, photographed from directly above, " +
+    "showing its front and back. Is a single physical knife of any kind — folding, fixed-blade, " +
+    "multi-tool, or otherwise — clearly present and visible in the photo? Answer false for an " +
+    "empty/background photo, a non-knife object, or an image too unclear to tell."
+  );
+}
 
 const LOCATE_PROMPT =
   "Look at the full view of this knife slot (front and back) and identify up to 3 distinct " +
@@ -391,7 +408,7 @@ export async function identifyKnife(
   const [presence, located] = await Promise.all([
     generateJson<{ knife_present: boolean; reason: string }>(
       ai,
-      [...imageParts(frontFull, backFull, extraImages), PRESENCE_PROMPT],
+      [...imageParts(frontFull, backFull, extraImages), presencePrompt(slotCount)],
       PRESENCE_SCHEMA,
     ),
     generateJson<{ front_marks: MarkLocation[]; back_marks: MarkLocation[] }>(
@@ -430,10 +447,10 @@ export async function identifyKnife(
   const identification = await generateJson<KnifeIdentification>(
     ai,
     [
-      "This is the front and back photo of a single pocketknife, along with a literal transcription of the text/marks visible on it.",
+      "This is the front and back photo of a single knife, along with a literal transcription of the text/marks visible on it.",
       ...imageParts(frontFull, backFull, extraImages),
       `Transcription of visible marks:\n${transcription}`,
-      "Using both the images and the transcription, identify this knife. Model_number is the manufacturer's stamped/printed model or pattern number (e.g. '6318'), distinct from the descriptive model name — leave it null if no such number is visible, don't infer one from the model name. For maker, model, model_number, blade_steel, and handle_material, also give a confidence level (high/medium/low) for how sure you are. Estimate blade_length_in and overall_length_open_in in inches by comparing the knife's proportions to typical pocketknife dimensions. Estimate year_start and year_end (the earliest and latest years this knife was likely produced) by reasoning about the maker/model, construction style, materials, and any markings — use the same value for both if a single year is the best estimate, and give a year_confidence for that estimate. Use null for anything you cannot determine — do not guess just to fill a field.",
+      "Using both the images and the transcription, identify this knife. Model_number is the manufacturer's stamped/printed model or pattern number (e.g. '6318'), distinct from the descriptive model name — leave it null if no such number is visible, don't infer one from the model name. For maker, model, model_number, blade_steel, and handle_material, also give a confidence level (high/medium/low) for how sure you are. Estimate blade_length_in and overall_length_open_in in inches by comparing the knife's proportions to typical dimensions for its apparent type (folding pocketknife, fixed-blade, multi-tool, etc.) — don't assume it's a folding pocketknife unless the images show one. Estimate year_start and year_end (the earliest and latest years this knife was likely produced) by reasoning about the maker/model, construction style, materials, and any markings — use the same value for both if a single year is the best estimate, and give a year_confidence for that estimate. Use null for anything you cannot determine — do not guess just to fill a field.",
     ],
     IDENTIFICATION_SCHEMA,
   );

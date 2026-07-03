@@ -286,28 +286,18 @@ export default function ReviewQueue({
             <p className="mt-1 text-xs">
               If the photo was unclear, add a closer shot below, then retry.
             </p>
-            <div className="mt-2 flex flex-wrap gap-2">
+            {current.status === "not_identified" && (
               <button
                 type="button"
-                onClick={() => onRetryIdentify(current.id)}
-                disabled={retrying[current.id]}
-                className="flex h-8 items-center justify-center rounded-full border border-solid border-amber-400 px-3 text-xs font-medium text-amber-900 transition-colors hover:bg-amber-100 disabled:opacity-50 dark:border-amber-700 dark:text-amber-200 dark:hover:bg-amber-900"
+                onClick={() => {
+                  setDismissedSkips((prev) => ({ ...prev, [current.id]: true }));
+                  if (index < visible.length - 1) setIndex(index + 1);
+                }}
+                className="mt-2 flex h-8 items-center justify-center rounded-full px-3 text-xs font-medium text-amber-900 underline transition-colors hover:bg-amber-100 dark:text-amber-200 dark:hover:bg-amber-900"
               >
-                {retrying[current.id] ? "Retrying…" : "Retry identification"}
+                Skip — no knife here
               </button>
-              {current.status === "not_identified" && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDismissedSkips((prev) => ({ ...prev, [current.id]: true }));
-                    if (index < visible.length - 1) setIndex(index + 1);
-                  }}
-                  className="flex h-8 items-center justify-center rounded-full px-3 text-xs font-medium text-amber-900 underline transition-colors hover:bg-amber-100 dark:text-amber-200 dark:hover:bg-amber-900"
-                >
-                  Skip — no knife here
-                </button>
-              )}
-            </div>
+            )}
           </div>
         )}
 
@@ -347,6 +337,23 @@ export default function ReviewQueue({
             }
           />
         </div>
+
+        {/* Available for any not-yet-confirmed knife, not just a failed
+            one — e.g. after adding a photo to a knife that already
+            identified successfully but at low confidence. Excluded once
+            confirmed so retrying can't silently overwrite a user's saved
+            edits with a fresh AI guess (identify() always resets status
+            to "draft" when it finds a knife). */}
+        {current.status !== "confirmed" && (
+          <button
+            type="button"
+            onClick={() => onRetryIdentify(current.id)}
+            disabled={retrying[current.id]}
+            className="flex h-9 w-fit items-center justify-center self-start rounded-full border border-solid border-black/[.15] px-4 text-sm font-medium transition-colors hover:bg-black/[.04] disabled:opacity-50 dark:border-white/[.2] dark:hover:bg-[#1a1a1a]"
+          >
+            {retrying[current.id] ? "Retrying…" : "Retry identification"}
+          </button>
+        )}
 
         <SpecField
           label="Maker"
