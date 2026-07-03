@@ -139,13 +139,39 @@ function SpecField({
   );
 }
 
+// A "draft" knife with every field still null almost always means
+// identify() never actually finished for it (a transient API error, most
+// commonly Gemini returning 503 under load) rather than the AI genuinely
+// finding nothing — the identification prompt always attempts to fill in
+// something when it thinks a knife is present. Without this, a failed
+// call is indistinguishable from a real accuracy miss.
+function isUnprocessed(knife: Knife): boolean {
+  return (
+    knife.status === "draft" &&
+    knife.maker == null &&
+    knife.model == null &&
+    knife.pattern == null &&
+    knife.blade_steel == null &&
+    knife.handle_material == null &&
+    knife.blade_length_in == null &&
+    knife.overall_length_open_in == null &&
+    knife.notes == null
+  );
+}
+
 export default function ReviewQueue({
   knives,
   thumbnails,
+  errors,
+  retrying,
+  onRetryIdentify,
   onKnifeUpdated,
 }: {
   knives: Knife[];
   thumbnails: Thumbnails;
+  errors: Record<string, string>;
+  retrying: Record<string, boolean>;
+  onRetryIdentify: (knifeId: string) => void;
   onKnifeUpdated: (knife: Knife) => void;
 }) {
   const sorted = useMemo(
@@ -295,6 +321,21 @@ export default function ReviewQueue({
             {current.status}
           </span>
         </div>
+
+        {(errors[current.id] || isUnprocessed(current)) && (
+          <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+            <p className="font-medium">Identification didn&apos;t finish for this knife.</p>
+            {errors[current.id] && <p className="mt-1 text-xs">{errors[current.id]}</p>}
+            <button
+              type="button"
+              onClick={() => onRetryIdentify(current.id)}
+              disabled={retrying[current.id]}
+              className="mt-2 flex h-8 items-center justify-center rounded-full border border-solid border-amber-400 px-3 text-xs font-medium text-amber-900 transition-colors hover:bg-amber-100 disabled:opacity-50 dark:border-amber-700 dark:text-amber-200 dark:hover:bg-amber-900"
+            >
+              {retrying[current.id] ? "Retrying…" : "Retry identification"}
+            </button>
+          </div>
+        )}
 
         <div className="flex gap-2">
           {thumbnails[current.id]?.front && (

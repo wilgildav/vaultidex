@@ -149,6 +149,9 @@ export default function BatchReview({ initialKnives }: { initialKnives: Knife[] 
       <ReviewQueue
         knives={knives}
         thumbnails={thumbnails}
+        errors={errors}
+        retrying={identifying}
+        onRetryIdentify={identify}
         onKnifeUpdated={(updated) =>
           setKnives((prev) => prev.map((k) => (k.id === updated.id ? updated : k)))
         }
