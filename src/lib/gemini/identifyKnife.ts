@@ -49,22 +49,6 @@ const CONFIDENCE_SCHEMA: Schema = {
   enum: ["high", "medium", "low"],
 };
 
-const PRESENCE_SCHEMA: Schema = {
-  type: Type.OBJECT,
-  properties: {
-    knife_present: {
-      type: Type.BOOLEAN,
-      description:
-        "True only if a single physical knife of any kind — folding, fixed-blade, multi-tool, or otherwise — is clearly visible and identifiable in this slot.",
-    },
-    reason: {
-      type: Type.STRING,
-      description: "One short sentence explaining the determination.",
-    },
-  },
-  required: ["knife_present", "reason"],
-};
-
 const MARK_SCHEMA: Schema = {
   type: Type.OBJECT,
   properties: {
@@ -88,15 +72,30 @@ const MARK_SCHEMA: Schema = {
   required: ["x", "y", "description"],
 };
 
-const LOCATE_SCHEMA: Schema = {
+// Presence and locate used to be two separate calls. They always ran
+// concurrently (locate doesn't depend on knowing presence is true) so
+// merging them saves a full API call rather than any wall-clock time —
+// but that's still worth it: every call is a chance to hit Gemini's rate
+// limiter, so fewer calls per identify() means less exposure to 429/503
+// congestion.
+const PRESENCE_AND_LOCATE_SCHEMA: Schema = {
   type: Type.OBJECT,
   properties: {
+    knife_present: {
+      type: Type.BOOLEAN,
+      description:
+        "True only if a single physical knife of any kind — folding, fixed-blade, multi-tool, or otherwise — is clearly visible and identifiable in this slot.",
+    },
+    reason: {
+      type: Type.STRING,
+      description: "One short sentence explaining the presence determination.",
+    },
     front_marks: {
       type: Type.ARRAY,
       items: MARK_SCHEMA,
       maxItems: String(MAX_MARKS_PER_SIDE),
       description:
-        "Up to 3 distinct locations on the FRONT image with visible text, numbers, stamps, engravings, or printed markings. Empty array if none.",
+        "Up to 3 distinct locations on the FRONT image with visible text, numbers, stamps, engravings, or printed markings. Empty array if none, or if no knife is present.",
     },
     back_marks: {
       type: Type.ARRAY,
@@ -105,7 +104,7 @@ const LOCATE_SCHEMA: Schema = {
       description: "Same, for the BACK image.",
     },
   },
-  required: ["front_marks", "back_marks"],
+  required: ["knife_present", "reason", "front_marks", "back_marks"],
 };
 
 const TRANSCRIPTION_SCHEMA: Schema = {
@@ -278,32 +277,30 @@ async function generateJson<T>(
 // pocketknives — a hardcoded "up to five pocketknives" description was
 // both inaccurate for single-knife uploads and nudged the model toward
 // expecting a folding knife regardless of what's actually in the photo.
-function presencePrompt(slotCount: number): string {
-  if (slotCount > 1) {
-    return (
-      `You are looking at one slot from a flat-lay photo of up to ${slotCount} knives, laid out ` +
-      "side by side and photographed from directly above. This is a single cropped vertical " +
-      "slice from that photo, showing the front and back of whatever is in this slot. Is a " +
-      "single physical knife of any kind — folding, fixed-blade, multi-tool, or otherwise — " +
-      "clearly present and visible in this slot? Answer false for an empty/background slot, a " +
-      "non-knife object, or an image too unclear to tell."
-    );
-  }
+//
+// Asks two things in one call: is a knife present, and (regardless of
+// that answer) where are the marks worth zooming into. The second
+// question costs nothing extra when the first is false — the caller just
+// discards the mark locations in that case.
+function presenceAndLocatePrompt(slotCount: number): string {
+  const setup =
+    slotCount > 1
+      ? `You are looking at one slot from a flat-lay photo of up to ${slotCount} knives, laid out ` +
+        "side by side and photographed from directly above. This is a single cropped vertical " +
+        "slice from that photo, showing the front and back of whatever is in this slot."
+      : "You are looking at a flat-lay photo of a single knife, photographed from directly above, " +
+        "showing its front and back.";
   return (
-    "You are looking at a flat-lay photo of a single knife, photographed from directly above, " +
-    "showing its front and back. Is a single physical knife of any kind — folding, fixed-blade, " +
-    "multi-tool, or otherwise — clearly present and visible in the photo? Answer false for an " +
-    "empty/background photo, a non-knife object, or an image too unclear to tell."
+    `${setup} First, determine whether a single physical knife of any kind — folding, ` +
+    "fixed-blade, multi-tool, or otherwise — is clearly present and visible. Answer false for " +
+    "an empty/background slot, a non-knife object, or an image too unclear to tell. Second, " +
+    "whether or not a knife is present, identify up to 3 distinct areas on each side (front and " +
+    "back) where you can see any text, numbers, stamps, engravings, or printed markings — even " +
+    "if you can't read them clearly yet, just note where they are; use an empty list for a side " +
+    "with none, or if no knife is present. For each, report its approximate center position as " +
+    "a fraction of that image's width (x: 0=left, 1=right) and height (y: 0=top, 1=bottom)."
   );
 }
-
-const LOCATE_PROMPT =
-  "Look at the full view of this knife slot (front and back) and identify up to 3 distinct " +
-  "areas on each side where you can see any text, numbers, stamps, engravings, or printed " +
-  "markings — even if you can't read them clearly yet, just note where they are. For each, " +
-  "report its approximate center position as a fraction of that image's width (x: 0=left, " +
-  "1=right) and height (y: 0=top, 1=bottom). If a side has no visible marking at all, return " +
-  "an empty list for that side.";
 
 const TRANSCRIPTION_PROMPT =
   "Transcribe exactly what text, numbers, marks, stamps, or engravings you can see on this " +
@@ -366,18 +363,17 @@ async function runTranscription(
 // /verify-specs route) once this returns, instead of making the caller
 // wait for it before seeing any result.
 //
-//   1. Presence check and 2. Locate run in parallel — locate doesn't
-//      actually depend on knowing presence is true, so there's no reason
-//      to wait for one before starting the other. If presence comes back
-//      false, the locate result is just discarded.
-//   3. Zoom — crop tightly around each located point, from the original
+//   1. Presence + locate — one call asking both "is a knife here" and
+//      "where are the marks worth zooming into". If presence comes back
+//      false, the mark locations are just discarded.
+//   2. Zoom — crop tightly around each located point, from the original
 //      full-resolution photo, so small dense text gets dedicated pixels
 //      instead of being diluted across the whole knife.
-//   4. Transcription — literal reading, using the full views plus the
+//   3. Transcription — literal reading, using the full views plus the
 //      located zoomed crops.
-//   5. Identification — uses the images + transcription to fill in fields,
+//   4. Identification — uses the images + transcription to fill in fields,
 //      each with a high/medium/low confidence where applicable.
-//   6. Self-consistency check (only if maker/model confidence came back
+//   5. Self-consistency check (only if maker/model confidence came back
 //      "medium") — re-run transcription twice more using the same located
 //      crops; agreement upgrades to high confidence, disagreement
 //      downgrades to low confidence and records the differing readings.
@@ -400,36 +396,35 @@ export async function identifyKnife(
     extractSlotFullCrop(backPrepared, slotPosition, slotCount),
   ]);
 
-  // Extras are only ever passed to steps that reason over the whole knife
-  // (presence, transcription, identification) — not to `locate`, whose job
-  // is finding crop coordinates within the original front/back slot images
-  // specifically. An extra photo is already a close-up, so there's nothing
-  // in it to crop tighter.
-  const [presence, located] = await Promise.all([
-    generateJson<{ knife_present: boolean; reason: string }>(
-      ai,
-      [...imageParts(frontFull, backFull, extraImages), presencePrompt(slotCount)],
-      PRESENCE_SCHEMA,
-    ),
-    generateJson<{ front_marks: MarkLocation[]; back_marks: MarkLocation[] }>(
-      ai,
-      [...imageParts(frontFull, backFull), LOCATE_PROMPT],
-      LOCATE_SCHEMA,
-    ),
-  ]);
+  // Extras ride along here too — they're relevant to the presence
+  // determination — even though the resulting mark coordinates only ever
+  // get applied to the front/back slot images specifically (an extra
+  // photo is already a close-up, so there's nothing in it to crop
+  // tighter). The images are each labeled in imageParts, so the model
+  // attributes front_marks/back_marks to the right ones regardless.
+  const presenceAndLocate = await generateJson<{
+    knife_present: boolean;
+    reason: string;
+    front_marks: MarkLocation[];
+    back_marks: MarkLocation[];
+  }>(
+    ai,
+    [...imageParts(frontFull, backFull, extraImages), presenceAndLocatePrompt(slotCount)],
+    PRESENCE_AND_LOCATE_SCHEMA,
+  );
 
-  if (!presence.knife_present) {
-    return { knifePresent: false, presenceReason: presence.reason };
+  if (!presenceAndLocate.knife_present) {
+    return { knifePresent: false, presenceReason: presenceAndLocate.reason };
   }
 
   const [frontMarkCrops, backMarkCrops] = await Promise.all([
     Promise.all(
-      located.front_marks.map((mark) =>
+      presenceAndLocate.front_marks.map((mark) =>
         extractMarkCrop(frontPrepared, slotPosition, mark, slotCount),
       ),
     ),
     Promise.all(
-      located.back_marks.map((mark) =>
+      presenceAndLocate.back_marks.map((mark) =>
         extractMarkCrop(backPrepared, slotPosition, mark, slotCount),
       ),
     ),
@@ -463,7 +458,7 @@ export async function identifyKnife(
   if (!needsConsistencyCheck) {
     return {
       knifePresent: true,
-      presenceReason: presence.reason,
+      presenceReason: presenceAndLocate.reason,
       transcription,
       locatedMarks,
       identification,
@@ -509,7 +504,7 @@ export async function identifyKnife(
 
   return {
     knifePresent: true,
-    presenceReason: presence.reason,
+    presenceReason: presenceAndLocate.reason,
     transcription,
     locatedMarks,
     identification: adjusted,
