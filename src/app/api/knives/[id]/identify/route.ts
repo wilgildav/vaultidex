@@ -45,9 +45,14 @@ export async function POST(
   // Crops are generated from the original full-resolution batch photo (not
   // the already-cropped, already-recompressed per-slot image) so any
   // zoomed-in crops lose as little detail as possible.
-  const [frontDownload, backDownload] = await Promise.all([
+  const [frontDownload, backDownload, extraPhotoRows] = await Promise.all([
     supabase.storage.from("knife-photos").download(batch.front_image_path),
     supabase.storage.from("knife-photos").download(batch.back_image_path),
+    supabase
+      .from("knife_extra_photos")
+      .select("storage_path")
+      .eq("knife_id", id)
+      .order("created_at", { ascending: true }),
   ]);
 
   if (frontDownload.error || !frontDownload.data) {
@@ -57,12 +62,29 @@ export async function POST(
     return NextResponse.json({ error: "Could not load the back batch photo." }, { status: 500 });
   }
 
+  // Best-effort: any user-added close-ups (e.g. after a failed first
+  // attempt) ride along with every image-bearing step of the pipeline. A
+  // single photo failing to download shouldn't block a retry that would
+  // otherwise succeed on the rest, so failures here are just skipped
+  // rather than surfaced as an error.
+  const extraDownloads = await Promise.all(
+    (extraPhotoRows.data ?? []).map((photo) =>
+      supabase.storage.from("knife-photos").download(photo.storage_path),
+    ),
+  );
+  const extraBuffers = await Promise.all(
+    extraDownloads
+      .filter((download) => !download.error && download.data)
+      .map((download) => download.data!.arrayBuffer().then((buf) => Buffer.from(buf))),
+  );
+
   try {
     const result = await identifyKnife(
       Buffer.from(await frontDownload.data.arrayBuffer()),
       Buffer.from(await backDownload.data.arrayBuffer()),
       knife.slot_position,
       batch.slot_count,
+      extraBuffers,
     );
 
     if (!result.knifePresent) {

@@ -32,6 +32,17 @@ export async function prepareImage(buffer: Buffer): Promise<PreparedImage> {
   return { image, width, height };
 }
 
+// For a user-added extra photo (e.g. a close-up of a tang stamp) — these
+// aren't a slice of a multi-knife flat-lay, just a standalone shot, so
+// there's no slot geometry to crop against. Still worth normalizing
+// through sharp for the same EXIF-orientation fix `prepareImage` does,
+// since a photo picked from the library (rather than captured in-app) may
+// carry orientation metadata Gemini won't otherwise account for.
+export async function normalizeStandaloneImage(buffer: Buffer): Promise<ImageInput> {
+  const jpeg = await sharp(buffer).rotate().jpeg({ quality: 95 }).toBuffer();
+  return { buffer: jpeg, mimeType: "image/jpeg" };
+}
+
 function slotBounds(prepared: PreparedImage, slotPosition: number, slotCount: number): Region {
   const slotWidthExact = prepared.width / slotCount;
   const left = clamp(Math.round((slotPosition - 1) * slotWidthExact), 0, prepared.width - 1);

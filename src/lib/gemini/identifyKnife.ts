@@ -11,6 +11,7 @@ import {
   prepareImage,
   extractSlotFullCrop,
   extractMarkCrop,
+  normalizeStandaloneImage,
   type ImageInput,
   type MarkLocation,
 } from "./multiCrop";
@@ -26,13 +27,20 @@ function imagePart(image: ImageInput) {
   );
 }
 
-function imageParts(front: ImageInput, back: ImageInput) {
-  return [
+function imageParts(front: ImageInput, back: ImageInput, extras: ImageInput[] = []) {
+  const parts: (string | ReturnType<typeof imagePart>)[] = [
     "Front photo of the slot:",
     imagePart(front),
     "Back photo of the same slot:",
     imagePart(back),
   ];
+  extras.forEach((extra, i) => {
+    parts.push(
+      `Additional user-provided close-up ${i + 1} of ${extras.length} (not tied to front or back specifically — could show either side, or just a detail like a tang stamp):`,
+      imagePart(extra),
+    );
+  });
+  return parts;
 }
 
 const CONFIDENCE_SCHEMA: Schema = {
@@ -298,6 +306,7 @@ async function runTranscription(
   backFull: ImageInput,
   frontMarkCrops: ImageInput[],
   backMarkCrops: ImageInput[],
+  extras: ImageInput[] = [],
 ): Promise<string> {
   const parts: (string | ReturnType<typeof imagePart>)[] = [
     "This is one knife, shown from multiple angles and zoom levels.",
@@ -315,6 +324,12 @@ async function runTranscription(
     parts.push(
       `BACK — zoomed close-up ${i + 1} of ${backMarkCrops.length} (a located area of interest):`,
       imagePart(crop),
+    );
+  });
+  extras.forEach((extra, i) => {
+    parts.push(
+      `ADDITIONAL — user-provided close-up ${i + 1} of ${extras.length} (not tied to front or back specifically):`,
+      imagePart(extra),
     );
   });
   parts.push(TRANSCRIPTION_PROMPT);
@@ -354,22 +369,29 @@ export async function identifyKnife(
   backBuffer: Buffer,
   slotPosition: number,
   slotCount: number,
+  extraBuffers: Buffer[] = [],
 ): Promise<IdentifyKnifeResult> {
   const ai = getGeminiClient();
 
-  const [frontPrepared, backPrepared] = await Promise.all([
+  const [frontPrepared, backPrepared, extraImages] = await Promise.all([
     prepareImage(frontBuffer),
     prepareImage(backBuffer),
+    Promise.all(extraBuffers.map(normalizeStandaloneImage)),
   ]);
   const [frontFull, backFull] = await Promise.all([
     extractSlotFullCrop(frontPrepared, slotPosition, slotCount),
     extractSlotFullCrop(backPrepared, slotPosition, slotCount),
   ]);
 
+  // Extras are only ever passed to steps that reason over the whole knife
+  // (presence, transcription, identification) — not to `locate`, whose job
+  // is finding crop coordinates within the original front/back slot images
+  // specifically. An extra photo is already a close-up, so there's nothing
+  // in it to crop tighter.
   const [presence, located] = await Promise.all([
     generateJson<{ knife_present: boolean; reason: string }>(
       ai,
-      [...imageParts(frontFull, backFull), PRESENCE_PROMPT],
+      [...imageParts(frontFull, backFull, extraImages), PRESENCE_PROMPT],
       PRESENCE_SCHEMA,
     ),
     generateJson<{ front_marks: MarkLocation[]; back_marks: MarkLocation[] }>(
@@ -402,13 +424,14 @@ export async function identifyKnife(
     backFull,
     frontMarkCrops,
     backMarkCrops,
+    extraImages,
   );
 
   const identification = await generateJson<KnifeIdentification>(
     ai,
     [
       "This is the front and back photo of a single pocketknife, along with a literal transcription of the text/marks visible on it.",
-      ...imageParts(frontFull, backFull),
+      ...imageParts(frontFull, backFull, extraImages),
       `Transcription of visible marks:\n${transcription}`,
       "Using both the images and the transcription, identify this knife. Model_number is the manufacturer's stamped/printed model or pattern number (e.g. '6318'), distinct from the descriptive model name — leave it null if no such number is visible, don't infer one from the model name. For maker, model, model_number, blade_steel, and handle_material, also give a confidence level (high/medium/low) for how sure you are. Estimate blade_length_in and overall_length_open_in in inches by comparing the knife's proportions to typical pocketknife dimensions. Estimate year_start and year_end (the earliest and latest years this knife was likely produced) by reasoning about the maker/model, construction style, materials, and any markings — use the same value for both if a single year is the best estimate, and give a year_confidence for that estimate. Use null for anything you cannot determine — do not guess just to fill a field.",
     ],
@@ -432,8 +455,8 @@ export async function identifyKnife(
   }
 
   const [transcription2, transcription3] = await Promise.all([
-    runTranscription(ai, frontFull, backFull, frontMarkCrops, backMarkCrops),
-    runTranscription(ai, frontFull, backFull, frontMarkCrops, backMarkCrops),
+    runTranscription(ai, frontFull, backFull, frontMarkCrops, backMarkCrops, extraImages),
+    runTranscription(ai, frontFull, backFull, frontMarkCrops, backMarkCrops, extraImages),
   ]);
   const transcriptions = [transcription, transcription2, transcription3];
 
