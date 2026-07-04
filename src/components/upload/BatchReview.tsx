@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { Knife } from "@/types/knife";
 import ReviewQueue from "@/components/review/ReviewQueue";
@@ -15,6 +15,17 @@ export default function BatchReview({ initialKnives }: { initialKnives: Knife[] 
   const [, setVerifying] = useState<Record<string, boolean>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [allIdentifyAttempted, setAllIdentifyAttempted] = useState(false);
+
+  // Per-knife attempt counters — incremented every time identify() or
+  // verifySpecsForKnife() is (re)called for a knife. A response only gets
+  // applied to state if it's still the latest attempt for that knife by
+  // the time it resolves. Without this, a slower, stale call (e.g. two
+  // overlapping requests for the same knife) can resolve after a fresher
+  // one and overwrite good data with an outdated error — exactly what
+  // happened when React's dev-mode Strict Mode double-invoked the
+  // effect below before the ref guard was added.
+  const identifyAttemptRef = useRef<Record<string, number>>({});
+  const verifyAttemptRef = useRef<Record<string, number>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -57,9 +68,15 @@ export default function BatchReview({ initialKnives }: { initialKnives: Knife[] 
   // upgrade to "verified" in place once this resolves, instead of the user
   // staring at "Identifying…" for a minute or more waiting on a web search.
   const verifySpecsForKnife = useCallback(async (knifeId: string) => {
+    const attempt = (verifyAttemptRef.current[knifeId] ?? 0) + 1;
+    verifyAttemptRef.current[knifeId] = attempt;
+
     setVerifying((prev) => ({ ...prev, [knifeId]: true }));
     const res = await fetch(`/api/knives/${knifeId}/verify-specs`, { method: "POST" });
     const body = await res.json();
+
+    if (verifyAttemptRef.current[knifeId] !== attempt) return;
+
     if (res.ok && body.knife) {
       setKnives((prev) => prev.map((k) => (k.id === knifeId ? body.knife : k)));
     }
@@ -68,11 +85,19 @@ export default function BatchReview({ initialKnives }: { initialKnives: Knife[] 
 
   const identify = useCallback(
     async (knifeId: string) => {
+      const attempt = (identifyAttemptRef.current[knifeId] ?? 0) + 1;
+      identifyAttemptRef.current[knifeId] = attempt;
+
       setIdentifying((prev) => ({ ...prev, [knifeId]: true }));
       setErrors((prev) => ({ ...prev, [knifeId]: "" }));
 
       const res = await fetch(`/api/knives/${knifeId}/identify`, { method: "POST" });
       const body = await res.json();
+
+      // A newer attempt for this knife has started since this one did —
+      // ignore this (stale) response so it can't overwrite a fresher
+      // result or clobber the UI with an outdated error.
+      if (identifyAttemptRef.current[knifeId] !== attempt) return;
 
       if (!res.ok) {
         setErrors((prev) => ({ ...prev, [knifeId]: body.error ?? "Identification failed." }));
@@ -93,7 +118,17 @@ export default function BatchReview({ initialKnives }: { initialKnives: Knife[] 
   // is created, instead of making the user click through each one. Once
   // every slot has been attempted at least once, hand off to the
   // one-at-a-time review queue where fields actually get confirmed.
+  //
+  // hasStartedRef guards against React Strict Mode's deliberate double
+  // effect invocation in development: without it, this whole block (and
+  // its real, costly fetch() calls to /identify) ran twice for every
+  // knife on every mount, racing two independent Gemini pipelines against
+  // each other for the same row and roughly doubling real API load.
+  const hasStartedRef = useRef(false);
   useEffect(() => {
+    if (hasStartedRef.current) return;
+    hasStartedRef.current = true;
+
     let cancelled = false;
     (async () => {
       await Promise.all(initialKnives.map((knife) => identify(knife.id)));

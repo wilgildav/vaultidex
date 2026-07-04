@@ -60,6 +60,10 @@ export async function POST(
 
     return NextResponse.json({ knife: updated, verifiedSpecs: verified });
   } catch (err) {
+    // Previously silent server-side — the client only ever saw a generic
+    // error, with nothing in the logs to say whether this was the
+    // documented-slow grounded search timing out or something else.
+    console.error(`[verify-specs] knife ${id} failed:`, err);
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Spec verification failed." },
       { status: 500 },

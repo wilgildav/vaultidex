@@ -3,6 +3,21 @@ import { getGeminiClient, withGeminiRetry } from "./client";
 
 const MODEL = "gemini-2.5-flash";
 
+// Per-step timing, logged to the server console — matches the same
+// instrumentation added to identifyKnife.ts. Added after a verify-specs
+// call failed with no diagnostic trail at all: the route's catch block
+// only ever returned the error to the client, so there was no way to
+// tell whether a given failure was the (documented-slow) grounded search
+// itself timing out vs. something else.
+async function timed<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  const start = Date.now();
+  try {
+    return await fn();
+  } finally {
+    console.log(`[verifySpecs] ${label}: ${((Date.now() - start) / 1000).toFixed(1)}s`);
+  }
+}
+
 export type SpecSource = { title: string; uri: string };
 
 export type VerifiedSpecs = {
@@ -77,25 +92,28 @@ async function generateJson<T>(ai: GoogleGenAI, parts: string[], schema: Schema)
 export async function verifySpecs(maker: string, model: string): Promise<VerifiedSpecs> {
   const ai = getGeminiClient();
   const subject = `maker "${maker}", model "${model}"`;
+  const pipelineStart = Date.now();
 
-  const searchResponse = await withGeminiRetry(() =>
-    ai.models.generateContent({
-      model: MODEL,
-      contents: createUserContent([
-        `Search for the official or widely-cited specifications of this knife: ${subject}. ` +
-          "Report the blade length (inches), overall open length when opened (inches), and " +
-          "blade steel type, based on real sources such as the manufacturer's website, retailer " +
-          "listings, or established knife-enthusiast references. Prefer the manufacturer's own " +
-          "listed figures if you find them. Sources routinely differ slightly by measurement " +
-          "convention (e.g. cutting edge vs. full blade length, or rounded metric conversions) — " +
-          "that's normal, not a failure; state your best single number for each spec and mention " +
-          "the range if it's notable. Only say you can't find reliable specs if you genuinely find " +
-          "no information tying real numbers to this specific model.",
-      ]),
-      config: {
-        tools: [{ googleSearch: {} }],
-      },
-    }),
+  const searchResponse = await timed("grounded search call", () =>
+    withGeminiRetry(() =>
+      ai.models.generateContent({
+        model: MODEL,
+        contents: createUserContent([
+          `Search for the official or widely-cited specifications of this knife: ${subject}. ` +
+            "Report the blade length (inches), overall open length when opened (inches), and " +
+            "blade steel type, based on real sources such as the manufacturer's website, retailer " +
+            "listings, or established knife-enthusiast references. Prefer the manufacturer's own " +
+            "listed figures if you find them. Sources routinely differ slightly by measurement " +
+            "convention (e.g. cutting edge vs. full blade length, or rounded metric conversions) — " +
+            "that's normal, not a failure; state your best single number for each spec and mention " +
+            "the range if it's notable. Only say you can't find reliable specs if you genuinely find " +
+            "no information tying real numbers to this specific model.",
+        ]),
+        config: {
+          tools: [{ googleSearch: {} }],
+        },
+      }),
+    ),
   );
 
   const searchText = searchResponse.text ?? "";
@@ -106,6 +124,7 @@ export async function verifySpecs(maker: string, model: string): Promise<Verifie
     .map((web) => ({ uri: web.uri, title: web.title || web.uri }));
 
   if (!searchText.trim()) {
+    console.log(`[verifySpecs] total (no search result): ${((Date.now() - pipelineStart) / 1000).toFixed(1)}s`);
     return {
       found: false,
       blade_length_in_verified: null,
@@ -116,21 +135,24 @@ export async function verifySpecs(maker: string, model: string): Promise<Verifie
     };
   }
 
-  const extracted = await generateJson<{
-    found: boolean;
-    blade_length_in: number | null;
-    overall_length_open_in: number | null;
-    blade_steel: string | null;
-    notes: string | null;
-  }>(
-    ai,
-    [
-      `Here is researched information about a knife (${subject}):\n${searchText}`,
-      "Extract the blade length, overall open length, and blade steel type as structured fields.",
-    ],
-    EXTRACTION_SCHEMA,
+  const extracted = await timed("extraction call", () =>
+    generateJson<{
+      found: boolean;
+      blade_length_in: number | null;
+      overall_length_open_in: number | null;
+      blade_steel: string | null;
+      notes: string | null;
+    }>(
+      ai,
+      [
+        `Here is researched information about a knife (${subject}):\n${searchText}`,
+        "Extract the blade length, overall open length, and blade steel type as structured fields.",
+      ],
+      EXTRACTION_SCHEMA,
+    ),
   );
 
+  console.log(`[verifySpecs] total: ${((Date.now() - pipelineStart) / 1000).toFixed(1)}s`);
   return {
     found: extracted.found,
     blade_length_in_verified: extracted.found ? extracted.blade_length_in : null,
