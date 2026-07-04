@@ -249,6 +249,19 @@ export type IdentifyKnifeResult =
       consistencyCheck: ConsistencyCheck;
     };
 
+// Per-step timing, logged to the server console — added while diagnosing
+// where "identification didn't finish" time actually goes. Cheap enough to
+// leave in permanently: one console.log per pipeline stage, not per
+// request internals.
+async function timed<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  const start = Date.now();
+  try {
+    return await fn();
+  } finally {
+    console.log(`[identifyKnife] ${label}: ${((Date.now() - start) / 1000).toFixed(1)}s`);
+  }
+}
+
 async function generateJson<T>(
   ai: GoogleGenAI,
   parts: (string | ReturnType<typeof imagePart>)[],
@@ -385,16 +398,21 @@ export async function identifyKnife(
   extraBuffers: Buffer[] = [],
 ): Promise<IdentifyKnifeResult> {
   const ai = getGeminiClient();
+  const pipelineStart = Date.now();
 
-  const [frontPrepared, backPrepared, extraImages] = await Promise.all([
-    prepareImage(frontBuffer),
-    prepareImage(backBuffer),
-    Promise.all(extraBuffers.map(normalizeStandaloneImage)),
-  ]);
-  const [frontFull, backFull] = await Promise.all([
-    extractSlotFullCrop(frontPrepared, slotPosition, slotCount),
-    extractSlotFullCrop(backPrepared, slotPosition, slotCount),
-  ]);
+  const [frontPrepared, backPrepared, extraImages] = await timed("image prep", () =>
+    Promise.all([
+      prepareImage(frontBuffer),
+      prepareImage(backBuffer),
+      Promise.all(extraBuffers.map(normalizeStandaloneImage)),
+    ]),
+  );
+  const [frontFull, backFull] = await timed("slot crop", () =>
+    Promise.all([
+      extractSlotFullCrop(frontPrepared, slotPosition, slotCount),
+      extractSlotFullCrop(backPrepared, slotPosition, slotCount),
+    ]),
+  );
 
   // Extras ride along here too — they're relevant to the presence
   // determination — even though the resulting mark coordinates only ever
@@ -402,52 +420,54 @@ export async function identifyKnife(
   // photo is already a close-up, so there's nothing in it to crop
   // tighter). The images are each labeled in imageParts, so the model
   // attributes front_marks/back_marks to the right ones regardless.
-  const presenceAndLocate = await generateJson<{
-    knife_present: boolean;
-    reason: string;
-    front_marks: MarkLocation[];
-    back_marks: MarkLocation[];
-  }>(
-    ai,
-    [...imageParts(frontFull, backFull, extraImages), presenceAndLocatePrompt(slotCount)],
-    PRESENCE_AND_LOCATE_SCHEMA,
+  const presenceAndLocate = await timed("presence+locate call", () =>
+    generateJson<{
+      knife_present: boolean;
+      reason: string;
+      front_marks: MarkLocation[];
+      back_marks: MarkLocation[];
+    }>(
+      ai,
+      [...imageParts(frontFull, backFull, extraImages), presenceAndLocatePrompt(slotCount)],
+      PRESENCE_AND_LOCATE_SCHEMA,
+    ),
   );
 
   if (!presenceAndLocate.knife_present) {
+    console.log(`[identifyKnife] total (not present): ${((Date.now() - pipelineStart) / 1000).toFixed(1)}s`);
     return { knifePresent: false, presenceReason: presenceAndLocate.reason };
   }
 
-  const [frontMarkCrops, backMarkCrops] = await Promise.all([
-    Promise.all(
-      presenceAndLocate.front_marks.map((mark) =>
-        extractMarkCrop(frontPrepared, slotPosition, mark, slotCount),
+  const [frontMarkCrops, backMarkCrops] = await timed("mark crop", () =>
+    Promise.all([
+      Promise.all(
+        presenceAndLocate.front_marks.map((mark) =>
+          extractMarkCrop(frontPrepared, slotPosition, mark, slotCount),
+        ),
       ),
-    ),
-    Promise.all(
-      presenceAndLocate.back_marks.map((mark) =>
-        extractMarkCrop(backPrepared, slotPosition, mark, slotCount),
+      Promise.all(
+        presenceAndLocate.back_marks.map((mark) =>
+          extractMarkCrop(backPrepared, slotPosition, mark, slotCount),
+        ),
       ),
-    ),
-  ]);
-
-  const transcription = await runTranscription(
-    ai,
-    frontFull,
-    backFull,
-    frontMarkCrops,
-    backMarkCrops,
-    extraImages,
+    ]),
   );
 
-  const identification = await generateJson<KnifeIdentification>(
-    ai,
-    [
-      "This is the front and back photo of a single knife, along with a literal transcription of the text/marks visible on it.",
-      ...imageParts(frontFull, backFull, extraImages),
-      `Transcription of visible marks:\n${transcription}`,
-      "Using both the images and the transcription, identify this knife. Model_number is the manufacturer's stamped/printed model or pattern number (e.g. '6318'), distinct from the descriptive model name — leave it null if no such number is visible, don't infer one from the model name. For maker, model, model_number, blade_steel, and handle_material, also give a confidence level (high/medium/low) for how sure you are. Estimate blade_length_in and overall_length_open_in in inches by comparing the knife's proportions to typical dimensions for its apparent type (folding pocketknife, fixed-blade, multi-tool, etc.) — don't assume it's a folding pocketknife unless the images show one. Estimate year_start and year_end (the earliest and latest years this knife was likely produced) by reasoning about the maker/model, construction style, materials, and any markings — use the same value for both if a single year is the best estimate, and give a year_confidence for that estimate. Use null for anything you cannot determine — do not guess just to fill a field.",
-    ],
-    IDENTIFICATION_SCHEMA,
+  const transcription = await timed("transcription call", () =>
+    runTranscription(ai, frontFull, backFull, frontMarkCrops, backMarkCrops, extraImages),
+  );
+
+  const identification = await timed("identification call", () =>
+    generateJson<KnifeIdentification>(
+      ai,
+      [
+        "This is the front and back photo of a single knife, along with a literal transcription of the text/marks visible on it.",
+        ...imageParts(frontFull, backFull, extraImages),
+        `Transcription of visible marks:\n${transcription}`,
+        "Using both the images and the transcription, identify this knife. Model_number is the manufacturer's stamped/printed model or pattern number (e.g. '6318'), distinct from the descriptive model name — leave it null if no such number is visible, don't infer one from the model name. For maker, model, model_number, blade_steel, and handle_material, also give a confidence level (high/medium/low) for how sure you are. Estimate blade_length_in and overall_length_open_in in inches by comparing the knife's proportions to typical dimensions for its apparent type (folding pocketknife, fixed-blade, multi-tool, etc.) — don't assume it's a folding pocketknife unless the images show one. Estimate year_start and year_end (the earliest and latest years this knife was likely produced) by reasoning about the maker/model, construction style, materials, and any markings — use the same value for both if a single year is the best estimate, and give a year_confidence for that estimate. Use null for anything you cannot determine — do not guess just to fill a field.",
+      ],
+      IDENTIFICATION_SCHEMA,
+    ),
   );
 
   const locatedMarks = { front: frontMarkCrops.length, back: backMarkCrops.length };
@@ -456,6 +476,7 @@ export async function identifyKnife(
     identification.maker_confidence === "medium" || identification.model_confidence === "medium";
 
   if (!needsConsistencyCheck) {
+    console.log(`[identifyKnife] total: ${((Date.now() - pipelineStart) / 1000).toFixed(1)}s`);
     return {
       knifePresent: true,
       presenceReason: presenceAndLocate.reason,
@@ -466,22 +487,26 @@ export async function identifyKnife(
     };
   }
 
-  const [transcription2, transcription3] = await Promise.all([
-    runTranscription(ai, frontFull, backFull, frontMarkCrops, backMarkCrops, extraImages),
-    runTranscription(ai, frontFull, backFull, frontMarkCrops, backMarkCrops, extraImages),
-  ]);
+  const [transcription2, transcription3] = await timed("self-consistency reruns (x2, parallel)", () =>
+    Promise.all([
+      runTranscription(ai, frontFull, backFull, frontMarkCrops, backMarkCrops, extraImages),
+      runTranscription(ai, frontFull, backFull, frontMarkCrops, backMarkCrops, extraImages),
+    ]),
+  );
   const transcriptions = [transcription, transcription2, transcription3];
 
-  const consistency = await generateJson<{ agree: boolean; summary: string }>(
-    ai,
-    [
-      "Here are three independent attempts at transcribing the marks on the same knife:",
-      `Attempt 1:\n${transcriptions[0]}`,
-      `Attempt 2:\n${transcriptions[1]}`,
-      `Attempt 3:\n${transcriptions[2]}`,
-      "Do these three attempts substantially agree on the same maker/brand name and the same model name or number?",
-    ],
-    CONSISTENCY_SCHEMA,
+  const consistency = await timed("consistency compare call", () =>
+    generateJson<{ agree: boolean; summary: string }>(
+      ai,
+      [
+        "Here are three independent attempts at transcribing the marks on the same knife:",
+        `Attempt 1:\n${transcriptions[0]}`,
+        `Attempt 2:\n${transcriptions[1]}`,
+        `Attempt 3:\n${transcriptions[2]}`,
+        "Do these three attempts substantially agree on the same maker/brand name and the same model name or number?",
+      ],
+      CONSISTENCY_SCHEMA,
+    ),
   );
 
   // The consistency check asks a single joint question — whether maker AND
@@ -502,6 +527,7 @@ export async function identifyKnife(
     adjusted.notes = adjusted.notes ? `${adjusted.notes}\n\n${disagreementNote}` : disagreementNote;
   }
 
+  console.log(`[identifyKnife] total (with self-consistency): ${((Date.now() - pipelineStart) / 1000).toFixed(1)}s`);
   return {
     knifePresent: true,
     presenceReason: presenceAndLocate.reason,

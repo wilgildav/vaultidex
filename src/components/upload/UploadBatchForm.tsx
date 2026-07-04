@@ -27,7 +27,12 @@ export default function UploadBatchForm({ userId }: { userId: string }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const [createdKnives, setCreatedKnives] = useState<Knife[] | null>(null);
+  // Each submission's knives are appended, not replacing the previous
+  // entry — otherwise submitting a second batch before the first one's
+  // background identification finishes would unmount its whole review
+  // section, silently discarding it from view (the underlying rows are
+  // untouched, but the user has no way to find them again from here).
+  const [createdBatches, setCreatedBatches] = useState<Knife[][]>([]);
 
   const canSubmit = !!frontFile && !!backFile && !submitting;
 
@@ -101,7 +106,7 @@ export default function UploadBatchForm({ userId }: { userId: string }) {
         mode === "single"
           ? await createSingleKnife({ supabase, userId, batchId: batch.id, frontFile, backFile })
           : await createSlotKnives({ supabase, userId, batchId: batch.id, frontFile, backFile });
-      setCreatedKnives(knives);
+      setCreatedBatches((prev) => [...prev, knives]);
     } catch (slotError) {
       setError(
         slotError instanceof Error
@@ -179,7 +184,9 @@ export default function UploadBatchForm({ userId }: { userId: string }) {
         </button>
       </form>
 
-      {createdKnives && <BatchReview initialKnives={createdKnives} />}
+      {createdBatches.map((knives) => (
+        <BatchReview key={knives[0]?.id} initialKnives={knives} />
+      ))}
     </>
   );
 }

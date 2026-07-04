@@ -11,10 +11,13 @@ import { ApiError, GoogleGenAI } from "@google/genai";
 // 20s was tried first and was too aggressive: a real multi-image call
 // (two full-resolution photos plus the presence+locate reasoning) can
 // legitimately take 25-40s with nothing wrong at all, so that value was
-// aborting healthy requests, not just hung ones. 45s gives real calls
-// headroom while still cutting off the multi-minute hangs seen under
-// actual congestion.
-const REQUEST_TIMEOUT_MS = 45_000;
+// aborting healthy requests, not just hung ones. 45s was still too tight —
+// real-world testing measured a single healthy call at ~44s, leaving
+// almost no margin, and a same-day comparison test saw individual calls
+// legitimately run 45-90s+ under current Gemini load. 90s gives real
+// headroom above that baseline while still cutting off true multi-minute
+// hangs.
+const REQUEST_TIMEOUT_MS = 90_000;
 
 export function getGeminiClient(): GoogleGenAI {
   const apiKey = process.env.GEMINI_API_KEY;
