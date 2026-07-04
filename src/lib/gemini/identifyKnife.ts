@@ -396,18 +396,24 @@ export async function identifyKnife(
   slotPosition: number,
   slotCount: number,
   extraBuffers: Buffer[] = [],
+  label?: string,
 ): Promise<IdentifyKnifeResult> {
   const ai = getGeminiClient();
   const pipelineStart = Date.now();
+  // Distinguishes log lines when multiple knives identify concurrently
+  // (already true for batch-mode uploads, which run all slots' identify()
+  // calls in parallel) — defaults to slot position so existing call sites
+  // get useful attribution for free without passing anything extra.
+  const tag = label ?? `slot ${slotPosition}`;
 
-  const [frontPrepared, backPrepared, extraImages] = await timed("image prep", () =>
+  const [frontPrepared, backPrepared, extraImages] = await timed(`[${tag}] image prep`, () =>
     Promise.all([
       prepareImage(frontBuffer),
       prepareImage(backBuffer),
       Promise.all(extraBuffers.map(normalizeStandaloneImage)),
     ]),
   );
-  const [frontFull, backFull] = await timed("slot crop", () =>
+  const [frontFull, backFull] = await timed(`[${tag}] slot crop`, () =>
     Promise.all([
       extractSlotFullCrop(frontPrepared, slotPosition, slotCount),
       extractSlotFullCrop(backPrepared, slotPosition, slotCount),
@@ -420,7 +426,7 @@ export async function identifyKnife(
   // photo is already a close-up, so there's nothing in it to crop
   // tighter). The images are each labeled in imageParts, so the model
   // attributes front_marks/back_marks to the right ones regardless.
-  const presenceAndLocate = await timed("presence+locate call", () =>
+  const presenceAndLocate = await timed(`[${tag}] presence+locate call`, () =>
     generateJson<{
       knife_present: boolean;
       reason: string;
@@ -434,11 +440,11 @@ export async function identifyKnife(
   );
 
   if (!presenceAndLocate.knife_present) {
-    console.log(`[identifyKnife] total (not present): ${((Date.now() - pipelineStart) / 1000).toFixed(1)}s`);
+    console.log(`[identifyKnife] [${tag}] total (not present): ${((Date.now() - pipelineStart) / 1000).toFixed(1)}s`);
     return { knifePresent: false, presenceReason: presenceAndLocate.reason };
   }
 
-  const [frontMarkCrops, backMarkCrops] = await timed("mark crop", () =>
+  const [frontMarkCrops, backMarkCrops] = await timed(`[${tag}] mark crop`, () =>
     Promise.all([
       Promise.all(
         presenceAndLocate.front_marks.map((mark) =>
@@ -453,11 +459,11 @@ export async function identifyKnife(
     ]),
   );
 
-  const transcription = await timed("transcription call", () =>
+  const transcription = await timed(`[${tag}] transcription call`, () =>
     runTranscription(ai, frontFull, backFull, frontMarkCrops, backMarkCrops, extraImages),
   );
 
-  const identification = await timed("identification call", () =>
+  const identification = await timed(`[${tag}] identification call`, () =>
     generateJson<KnifeIdentification>(
       ai,
       [
@@ -476,7 +482,7 @@ export async function identifyKnife(
     identification.maker_confidence === "medium" || identification.model_confidence === "medium";
 
   if (!needsConsistencyCheck) {
-    console.log(`[identifyKnife] total: ${((Date.now() - pipelineStart) / 1000).toFixed(1)}s`);
+    console.log(`[identifyKnife] [${tag}] total: ${((Date.now() - pipelineStart) / 1000).toFixed(1)}s`);
     return {
       knifePresent: true,
       presenceReason: presenceAndLocate.reason,
@@ -487,7 +493,7 @@ export async function identifyKnife(
     };
   }
 
-  const [transcription2, transcription3] = await timed("self-consistency reruns (x2, parallel)", () =>
+  const [transcription2, transcription3] = await timed(`[${tag}] self-consistency reruns (x2, parallel)`, () =>
     Promise.all([
       runTranscription(ai, frontFull, backFull, frontMarkCrops, backMarkCrops, extraImages),
       runTranscription(ai, frontFull, backFull, frontMarkCrops, backMarkCrops, extraImages),
@@ -495,7 +501,7 @@ export async function identifyKnife(
   );
   const transcriptions = [transcription, transcription2, transcription3];
 
-  const consistency = await timed("consistency compare call", () =>
+  const consistency = await timed(`[${tag}] consistency compare call`, () =>
     generateJson<{ agree: boolean; summary: string }>(
       ai,
       [
@@ -527,7 +533,7 @@ export async function identifyKnife(
     adjusted.notes = adjusted.notes ? `${adjusted.notes}\n\n${disagreementNote}` : disagreementNote;
   }
 
-  console.log(`[identifyKnife] total (with self-consistency): ${((Date.now() - pipelineStart) / 1000).toFixed(1)}s`);
+  console.log(`[identifyKnife] [${tag}] total (with self-consistency): ${((Date.now() - pipelineStart) / 1000).toFixed(1)}s`);
   return {
     knifePresent: true,
     presenceReason: presenceAndLocate.reason,
